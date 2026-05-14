@@ -1,0 +1,17 @@
+services:
+  arrqitect:
+    build: .
+    container_name: arrqitect
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ./compose:/compose
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - HOST_COMPOSE_DIR=${HOST_COMPOSE_DIR}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}

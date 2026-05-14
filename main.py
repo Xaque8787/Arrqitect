@@ -1,16 +1,35 @@
-# This is a sample Python script.
+import os
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from dotenv import load_dotenv
 
-# Press Shift+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
+load_dotenv()
+
+from app.api import templates, apps, jobs, ws
+from app.services.seeder import seed_templates
+
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 
 
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press Ctrl+F8 to toggle the breakpoint.
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    seed_templates()
+    yield
 
 
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
-    print_hi('PyCharm')
+app = FastAPI(title="Arrqitect", lifespan=lifespan)
 
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+app.include_router(templates.router)
+app.include_router(apps.router)
+app.include_router(jobs.router)
+app.include_router(ws.router)
+
+if os.path.isdir(STATIC_DIR):
+    app.mount("/assets", StaticFiles(directory=os.path.join(STATIC_DIR, "assets")), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        index = os.path.join(STATIC_DIR, "index.html")
+        return FileResponse(index)

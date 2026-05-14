@@ -1,0 +1,105 @@
+const BASE = "";
+
+async function req<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(BASE + path, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface AppTemplate {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  icon_url: string;
+  compose_template: string;
+  config_schema: ConfigField[];
+  hook_definitions: Record<string, string>;
+  provides: string[];
+}
+
+export interface ConfigField {
+  key: string;
+  label: string;
+  type: "string" | "number";
+  default: string | number;
+  required: boolean;
+}
+
+export interface InstalledApp {
+  id: string;
+  template_id: string;
+  slug: string;
+  name: string;
+  config: Record<string, unknown>;
+  state: "installing" | "running" | "stopped" | "error" | "removing";
+  compose_path: string;
+  created_at: string;
+  app_templates?: AppTemplate;
+}
+
+export interface Job {
+  id: string;
+  installed_app_id: string | null;
+  type: string;
+  status: "pending" | "running" | "success" | "failed" | "cancelled";
+  dry_run: boolean;
+  created_at: string;
+  job_steps?: JobStep[];
+}
+
+export interface JobStep {
+  id: string;
+  job_id: string;
+  step: string;
+  status: "pending" | "running" | "success" | "failed" | "skipped";
+  log: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface PreviewResult {
+  app_id: string;
+  slug: string;
+  config: Record<string, unknown>;
+  compose_rendered: string;
+  compose_ok: boolean;
+  compose_error: string | null;
+  hook_steps: { hook: string; action: string }[];
+  host_compose_path: string;
+}
+
+export const api = {
+  templates: {
+    list: () => req<AppTemplate[]>("/api/templates"),
+    get: (slug: string) => req<AppTemplate>(`/api/templates/${slug}`),
+  },
+  apps: {
+    list: () => req<InstalledApp[]>("/api/apps"),
+    get: (id: string) => req<InstalledApp>(`/api/apps/${id}`),
+    install: (template_slug: string, name: string, config: Record<string, unknown>) =>
+      req<{ app: InstalledApp; job: Job }>("/api/apps", {
+        method: "POST",
+        body: JSON.stringify({ template_slug, name, config }),
+      }),
+    updateConfig: (id: string, config: Record<string, unknown>) =>
+      req<{ job: Job }>(`/api/apps/${id}/config`, {
+        method: "PUT",
+        body: JSON.stringify({ config }),
+      }),
+    remove: (id: string) =>
+      req<{ job: Job }>(`/api/apps/${id}`, { method: "DELETE" }),
+    preview: (id: string) => req<PreviewResult>(`/api/apps/${id}/preview`, { method: "POST" }),
+  },
+  jobs: {
+    list: (app_id?: string) =>
+      req<Job[]>(`/api/jobs${app_id ? `?app_id=${app_id}` : ""}`),
+    get: (id: string) => req<Job>(`/api/jobs/${id}`),
+  },
+};
