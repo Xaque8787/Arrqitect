@@ -4,9 +4,9 @@ set -e
 PUID=${PUID:-1000}
 PGID=${PGID:-1000}
 
-# Ensure compose directory exists and is owned correctly
-mkdir -p /compose
-chown -R ${PUID}:${PGID} /compose
+# Ensure compose and data directories exist with correct ownership
+mkdir -p /compose /data
+chown -R ${PUID}:${PGID} /compose /data
 
 # Create group if it doesn't exist
 if ! getent group appgroup > /dev/null 2>&1; then

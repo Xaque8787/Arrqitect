@@ -1,9 +1,11 @@
 """
-Seeds the three v1 app templates (Prowlarr, Radarr, Sonarr) into app_templates.
-Idempotent — uses upsert on slug.
+Seeds the three v1 app templates (Prowlarr, Radarr, Sonarr).
+Idempotent — INSERT OR IGNORE on slug.
 """
 
-from app.db.client import get_client
+import json
+import secrets
+from app.db.client import get_sync_conn
 
 PROWLARR_COMPOSE = """\
 services:
@@ -119,8 +121,29 @@ TEMPLATES = [
 ]
 
 
-def seed_templates():
-    db = get_client()
-    for tmpl in TEMPLATES:
-        db.table("app_templates").upsert(tmpl, on_conflict="slug").execute()
-    print(f"[seeder] {len(TEMPLATES)} templates seeded")
+def seed_templates() -> None:
+    conn = get_sync_conn()
+    try:
+        count = 0
+        for tmpl in TEMPLATES:
+            conn.execute("""
+                INSERT OR IGNORE INTO app_templates
+                    (id, slug, name, description, icon_url, compose_template,
+                     config_schema, hook_definitions, provides)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                secrets.token_hex(16),
+                tmpl["slug"],
+                tmpl["name"],
+                tmpl["description"],
+                tmpl["icon_url"],
+                tmpl["compose_template"],
+                json.dumps(tmpl["config_schema"]),
+                json.dumps(tmpl["hook_definitions"]),
+                json.dumps(tmpl["provides"]),
+            ))
+            count += conn.total_changes
+        conn.commit()
+        print(f"[seeder] Templates seeded ({len(TEMPLATES)} checked)")
+    finally:
+        conn.close()

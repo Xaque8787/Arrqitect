@@ -1,7 +1,7 @@
 import asyncio
 import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from app.db.client import get_client
+from app.db.client import get_db
 from app.services.job_runner import subscribe, unsubscribe
 
 router = APIRouter(tags=["websocket"])
@@ -11,14 +11,22 @@ router = APIRouter(tags=["websocket"])
 async def job_log_ws(websocket: WebSocket, job_id: str):
     await websocket.accept()
 
-    db = get_client()
-    job = db.table("jobs").select("*, job_steps(*)").eq("id", job_id).maybeSingle().execute().data
-    if not job:
-        await websocket.close(code=4004, reason="Job not found")
-        return
+    async with get_db() as db:
+        async with db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)) as cur:
+            job_row = await cur.fetchone()
+        if not job_row:
+            await websocket.close(code=4004, reason="Job not found")
+            return
+        job = dict(job_row)
+
+        async with db.execute(
+            "SELECT * FROM job_steps WHERE job_id = ? ORDER BY started_at",
+            (job_id,),
+        ) as cur:
+            steps = [dict(r) for r in await cur.fetchall()]
 
     # Send existing steps as catch-up
-    for step in sorted(job.get("job_steps", []), key=lambda s: s.get("started_at") or ""):
+    for step in steps:
         await websocket.send_text(json.dumps({
             "type": "step",
             "step": step["step"],
@@ -33,7 +41,7 @@ async def job_log_ws(websocket: WebSocket, job_id: str):
 
     queue: asyncio.Queue = asyncio.Queue()
 
-    async def on_message(msg: str):
+    async def on_message(msg: str) -> None:
         await queue.put(msg)
 
     subscribe(job_id, on_message)

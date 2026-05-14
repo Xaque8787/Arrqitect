@@ -8,10 +8,13 @@ services:
     volumes:
       - .:/app
       - ./compose:/compose
+      - arrqitect_data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
       - HOST_COMPOSE_DIR=${HOST_COMPOSE_DIR}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - DB_PATH=/data/arrqitect.db
+
+volumes:
+  arrqitect_data:
