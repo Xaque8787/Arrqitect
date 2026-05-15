@@ -5,19 +5,17 @@ Derives the set of platform networks an app participates in,
 based on its provides/consumes declarations and the connectivity flag.
 
 Rules:
-  - Every app always joins arrqitect_platform (platform-internal).
-  - A consumes entry with connectivity: true causes a capability-shared
-    network to be created between the consumer and the matching provider.
+  - A consumes entry with connectivity: true AND a matched installed provider
+    causes a capability-shared network to be created between them.
   - A consumes entry with connectivity: false has no networking implication
     — it is a registry lookup only.
+  - No default platform network. Networks are earned, not assumed.
 """
 
 from __future__ import annotations
 
-from app.models.template import TemplateModel, CapabilityConsumes
+from app.models.template import TemplateModel
 from app.models.ir import NetworkIR, NetworkMembershipIR
-
-PLATFORM_NETWORK = "arrqitect_platform"
 
 
 def infer_networks(
@@ -32,19 +30,10 @@ def infer_networks(
     networks: dict[str, NetworkIR] = {}
     membership_ids: list[str] = []
 
-    # Every app always joins the platform network
-    networks[PLATFORM_NETWORK] = NetworkIR(
-        id=PLATFORM_NETWORK,
-        scope="platform-internal",
-    )
-    membership_ids.append(PLATFORM_NETWORK)
-
-    # Capability-shared networks for connectivity: true consumes entries
     for consumed in template.consumes:
         if not consumed.connectivity:
             continue
 
-        # Find a matching installed provider
         provider = _find_provider(consumed.key, installed_providers)
         if provider is None:
             continue

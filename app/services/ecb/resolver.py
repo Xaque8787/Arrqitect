@@ -155,13 +155,18 @@ def resolve_env_vars(
     """
     Build the complete env var list for a service with full provenance tagging.
 
-    Order: global → user_config → registry → derived
+    Env vars are emitted only when a config field's binds_to targets
+    services.<service_id>.env.<ENV_KEY>. The env var name is extracted
+    from the dotpath itself — no guessing from field type or id.
+
+    Order: global → user_config → registry
     """
     env_vars: list[EnvVarIR] = []
+    env_prefix = f"services.{service.id}.env."
 
-    # Global vars — injected for linuxserver flavor and always present
+    # Global vars — injected for linuxserver flavor
     if flavor == "linuxserver":
-        for setting_key, (env_name, source) in GLOBAL_ENV_MAP.items():
+        for setting_key, (env_name, _source) in GLOBAL_ENV_MAP.items():
             env_vars.append(EnvVarIR(
                 name=env_name,
                 value=str(global_settings.get(setting_key, _global_default(setting_key))),
@@ -169,18 +174,21 @@ def resolve_env_vars(
                 source_key=setting_key,
             ))
 
-    # User config vars — fields that bind to an env var (type port or string/number)
+    # User config vars — only fields whose binds_to targets an env var dotpath
     for field in config_schema:
-        if field.type in ("port", "string", "number", "boolean"):
-            value = resolved_config.get(field.id, "")
-            if value:
-                env_name = _config_field_to_env_name(field.id)
-                env_vars.append(EnvVarIR(
-                    name=env_name,
-                    value=value,
-                    source="user_config",
-                    source_key=field.id,
-                ))
+        if not field.binds_to.startswith(env_prefix):
+            continue
+        env_name = field.binds_to[len(env_prefix):]
+        if not env_name:
+            continue
+        value = resolved_config.get(field.id, "")
+        if value:
+            env_vars.append(EnvVarIR(
+                name=env_name,
+                value=value,
+                source="user_config",
+                source_key=field.id,
+            ))
 
     # Registry vars — values from consumed capabilities
     for entry in registry_entries:
@@ -215,10 +223,6 @@ def _find_bound_value(
 def _global_default(key: str) -> str:
     defaults = {"puid": "1000", "pgid": "1000", "timezone": "Etc/UTC"}
     return defaults.get(key, "")
-
-
-def _config_field_to_env_name(field_id: str) -> str:
-    return field_id.upper().replace("-", "_").replace(".", "_")
 
 
 def _registry_key_to_env_name(registry_key: str) -> str:

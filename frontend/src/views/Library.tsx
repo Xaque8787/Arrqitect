@@ -45,6 +45,44 @@ function StoragePathField({
   );
 }
 
+function ConfigFieldInput({
+  field,
+  value,
+  onChange,
+  appSlug,
+  composeBase,
+}: {
+  field: ConfigField;
+  value: string;
+  onChange: (v: string) => void;
+  appSlug: string;
+  composeBase: string | null;
+}) {
+  if (field.type === "storage_path") {
+    return (
+      <StoragePathField
+        field={field}
+        value={value}
+        onChange={onChange}
+        appSlug={appSlug}
+        composeBase={composeBase}
+      />
+    );
+  }
+  return (
+    <div className="form-group">
+      <label className="form-label">{field.label}</label>
+      <input
+        className="form-input"
+        type={field.type === "number" || field.type === "port" ? "number" : "text"}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        required={field.required}
+      />
+    </div>
+  );
+}
+
 function InstallModal({ template, composeBase, onClose, onInstalled }: {
   template: AppTemplate;
   composeBase: string | null;
@@ -58,6 +96,9 @@ function InstallModal({ template, composeBase, onClose, onInstalled }: {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  const visibleFields = template.config_schema.filter(f => (f.visibility ?? "visible") === "visible");
+  const advancedFields = template.config_schema.filter(f => (f.visibility ?? "visible") === "advanced");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,32 +146,34 @@ function InstallModal({ template, composeBase, onClose, onInstalled }: {
             />
           </div>
 
-          {template.config_schema.map((field: ConfigField) => {
-            if (field.type === "storage_path") {
-              return (
-                <StoragePathField
-                  key={field.id}
-                  field={field}
-                  value={config[field.id] ?? ""}
-                  onChange={v => setConfig(c => ({ ...c, [field.id]: v }))}
-                  appSlug={template.slug}
-                  composeBase={composeBase}
-                />
-              );
-            }
-            return (
-              <div key={field.id} className="form-group">
-                <label className="form-label">{field.label}</label>
-                <input
-                  className="form-input"
-                  type={field.type === "number" || field.type === "port" ? "number" : "text"}
-                  value={config[field.id] ?? ""}
-                  onChange={e => setConfig(c => ({ ...c, [field.id]: e.target.value }))}
-                  required={field.required}
-                />
+          {visibleFields.map(field => (
+            <ConfigFieldInput
+              key={field.id}
+              field={field}
+              value={config[field.id] ?? ""}
+              onChange={v => setConfig(c => ({ ...c, [field.id]: v }))}
+              appSlug={template.slug}
+              composeBase={composeBase}
+            />
+          ))}
+
+          {advancedFields.length > 0 && (
+            <details className="advanced-section">
+              <summary className="advanced-section-toggle">Advanced</summary>
+              <div className="advanced-section-body">
+                {advancedFields.map(field => (
+                  <ConfigFieldInput
+                    key={field.id}
+                    field={field}
+                    value={config[field.id] ?? ""}
+                    onChange={v => setConfig(c => ({ ...c, [field.id]: v }))}
+                    appSlug={template.slug}
+                    composeBase={composeBase}
+                  />
+                ))}
               </div>
-            );
-          })}
+            </details>
+          )}
 
           {error && <div className="form-error">{error}</div>}
 

@@ -54,6 +54,8 @@ config_schema:
     default: 9696
     binds_to: services.prowlarr.networking.ports.web_ui.published_port
     required: true
+    visibility: visible
+    source: user
 
   - id: config_path
     label: Config Path
@@ -61,6 +63,17 @@ config_schema:
     default: ./config
     binds_to: services.prowlarr.storage.config.host_path
     required: true
+    visibility: visible
+    source: user
+
+  - id: web_ui_port_env
+    label: Web UI Port (env)
+    type: port
+    default: 9696
+    binds_to: services.prowlarr.env.WEB_UI_PORT
+    required: false
+    visibility: hidden
+    source: platform
 
 hooks:
   post_install: hooks/post_install.yaml

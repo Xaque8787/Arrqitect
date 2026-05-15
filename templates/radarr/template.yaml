@@ -62,6 +62,8 @@ config_schema:
     default: 7878
     binds_to: services.radarr.networking.ports.web_ui.published_port
     required: true
+    visibility: visible
+    source: user
 
   - id: config_path
     label: Config Path
@@ -69,6 +71,8 @@ config_schema:
     default: ./config
     binds_to: services.radarr.storage.config.host_path
     required: true
+    visibility: visible
+    source: user
 
   - id: movies_path
     label: Movies Path
@@ -76,6 +80,8 @@ config_schema:
     default: /data/movies
     binds_to: services.radarr.storage.movies.host_path
     required: true
+    visibility: visible
+    source: user
 
   - id: downloads_path
     label: Downloads Path
@@ -83,6 +89,17 @@ config_schema:
     default: /data/downloads
     binds_to: services.radarr.storage.downloads.host_path
     required: true
+    visibility: visible
+    source: user
+
+  - id: web_ui_port_env
+    label: Web UI Port (env)
+    type: port
+    default: 7878
+    binds_to: services.radarr.env.WEB_UI_PORT
+    required: false
+    visibility: hidden
+    source: platform
 
 hooks:
   post_install: hooks/post_install.yaml

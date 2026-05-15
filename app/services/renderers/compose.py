@@ -1,9 +1,11 @@
 """
 ComposeRenderer — the only file in this codebase that knows Docker Compose syntax.
 
-Two phases:
-  Phase 1 — Semantic lowering: IR types -> Compose domain dicts
-  Phase 2 — Canonical serialization: deterministic YAML output
+Two stages:
+  Stage 1 — Semantic lowering: IR types -> Compose domain dicts
+  Stage 2 — Canonical serialization: deterministic YAML output
+
+Values are embedded directly in compose. No .env substitution.
 
 If you find yourself writing Compose concepts anywhere other than this file,
 that is an architecture violation.
@@ -64,12 +66,12 @@ class ComposeRenderer:
     def render(self) -> tuple[str, str]:
         """
         Returns (compose_yaml, env_content).
+        Values are embedded directly in compose — env_content is always empty.
         Both outputs are deterministic.
         """
         doc = self._build_document()
         compose_yaml = _serialize_canonical(doc)
-        env_content = self._build_env_content()
-        return compose_yaml, env_content
+        return compose_yaml, ""
 
     def compose_hash(self) -> str:
         compose_yaml, _ = self.render()
@@ -148,36 +150,7 @@ class ComposeRenderer:
         return [f"{e.name}={e.value}" for e in sorted_vars]
 
     def _emit_network(self, network: NetworkIR) -> dict[str, Any]:
-        if network.scope == "platform-internal":
-            # Platform network is external — it's managed by the platform, not this compose file
-            return {"external": True}
         return {"driver": "bridge"}
-
-    # --- Phase 2: .env content ---
-
-    def _build_env_content(self) -> str:
-        """
-        Build .env file content. Sensitive credentials go here instead of
-        being embedded in the compose file directly.
-        """
-        lines: list[str] = []
-
-        for svc in self._ir.services:
-            for env_var in sorted(svc.env_vars, key=lambda e: e.name):
-                val = env_var.value
-                if any(c in val for c in (" ", "#", "\n", '"')):
-                    val = f'"{val}"'
-                lines.append(f"{env_var.name}={val}")
-
-        # Deduplicate while preserving order (multiple services may share globals)
-        seen: set[str] = set()
-        unique_lines: list[str] = []
-        for line in lines:
-            if line not in seen:
-                seen.add(line)
-                unique_lines.append(line)
-
-        return "\n".join(unique_lines) + "\n" if unique_lines else ""
 
 
 # --- Canonical YAML serializer ---

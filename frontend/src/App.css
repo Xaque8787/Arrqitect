@@ -317,6 +317,22 @@
   margin-bottom: 14px;
 }
 
+/* ── Advanced section ──────────────────────────────────────── */
+.advanced-section { margin-bottom: 16px; }
+.advanced-section-toggle {
+  font-size: 12px; font-weight: 500; color: var(--color-text-muted);
+  text-transform: uppercase; letter-spacing: 0.4px; cursor: pointer;
+  list-style: none; display: flex; align-items: center; gap: 6px; margin-bottom: 0;
+  user-select: none;
+}
+.advanced-section-toggle::-webkit-details-marker { display: none; }
+.advanced-section-toggle::before {
+  content: "▶"; font-size: 8px; transition: transform 0.15s ease;
+  display: inline-block;
+}
+details[open] .advanced-section-toggle::before { transform: rotate(90deg); }
+.advanced-section-body { padding-top: 12px; }
+
 /* ── Sync banner ───────────────────────────────────────────── */
 .sync-banner {
   display: flex; align-items: center; justify-content: space-between;

@@ -72,6 +72,8 @@ class ConfigField(BaseModel):
     default: str | int | bool | None = None
     binds_to: str
     required: bool = False
+    visibility: Literal["visible", "advanced", "hidden"] = "visible"
+    source: Literal["user", "platform", "derived"] = "user"
 
 
 class AppModel(BaseModel):

@@ -19,6 +19,8 @@ export interface ConfigField {
   default: string | number | boolean | null;
   binds_to: string;
   required: boolean;
+  visibility: "visible" | "advanced" | "hidden";
+  source: "user" | "platform" | "derived";
 }
 
 export interface CapabilityProvides {
