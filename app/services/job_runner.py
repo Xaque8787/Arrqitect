@@ -1,6 +1,19 @@
 """
 Job runner: creates job + step records, executes install/update/remove pipelines.
 WebSocket broadcast handled via a simple in-memory subscriber map.
+
+Install pipeline (schema_version 2):
+  1. Load template TemplateModel from service_definitions in DB
+  2. Load global settings and registry entries for this app
+  3. Call ecb.compile_app() -> AppIR
+  4. Store ir_hash on installed_apps
+  5. Call ComposeRenderer(app_ir).render() -> (compose_yaml, env_content)
+  6. Store compose_hash on installed_apps
+  7. Write files to disk
+  8. Run docker compose up -d
+
+Install pipeline (schema_version 1 passthrough):
+  Legacy Jinja2 render path. Explicitly isolated.
 """
 
 import asyncio
@@ -13,12 +26,19 @@ from pathlib import Path
 from typing import Callable, Awaitable
 
 from app.db.client import get_db
-from app.services.ecb import (
-    render_compose,
-    build_env_file_content,
+from app.services.ecb import compile_app
+from app.services.ecb.parser import parse_template, PassthroughTemplate
+from app.services.renderers.compose import ComposeRenderer
+
+# Legacy render functions — used only for schema_version 1 passthrough apps
+from app.services.ecb_legacy import (
+    render_compose as _legacy_render_compose,
+    build_env_file_content as _legacy_build_env,
     write_compose_files,
     write_env_only,
 )
+
+CONTAINER_COMPOSE_DIR = "/compose"
 
 _subscribers: dict[str, list[Callable[[str], Awaitable[None]]]] = {}
 
@@ -93,14 +113,17 @@ async def _set_app_state(app_id: str, state: str) -> None:
 
 
 async def _load_app(app_id: str) -> dict | None:
-    import json as _json
     async with get_db() as db:
         async with db.execute("""
             SELECT a.*,
-                   v.compose        AS compose_template,
+                   v.compose             AS compose_template,
                    v.config_schema,
                    v.hook_definitions,
-                   v.provides
+                   v.provides,
+                   v.consumes,
+                   v.service_definitions,
+                   v.has_passthrough,
+                   v.schema_version      AS template_schema_version
             FROM installed_apps a
             JOIN app_templates t ON t.id = a.template_id
             LEFT JOIN template_versions v ON v.id = a.template_version_id
@@ -111,10 +134,54 @@ async def _load_app(app_id: str) -> dict | None:
         return None
     d = dict(row)
     if isinstance(d.get("config"), str):
-        d["config"] = _json.loads(d["config"])
-    d["hook_definitions"] = _json.loads(d["hook_definitions"]) if isinstance(d.get("hook_definitions"), str) else {}
-    d["config_schema"] = _json.loads(d["config_schema"]) if isinstance(d.get("config_schema"), str) else []
+        d["config"] = json.loads(d["config"])
+    d["hook_definitions"] = json.loads(d["hook_definitions"]) if isinstance(d.get("hook_definitions"), str) else {}
+    d["config_schema"] = json.loads(d["config_schema"]) if isinstance(d.get("config_schema"), str) else []
     return d
+
+
+async def _load_global_settings() -> dict:
+    async with get_db() as db:
+        async with db.execute("SELECT key, value FROM global_settings") as cur:
+            rows = await cur.fetchall()
+    s = {r[0]: r[1] for r in rows}
+    return {
+        "puid": s.get("puid", "1000"),
+        "pgid": s.get("pgid", "1000"),
+        "timezone": s.get("timezone", "Etc/UTC"),
+    }
+
+
+async def _load_registry_entries(app_id: str, consumes: list) -> list[dict]:
+    """Load registry values for all consumed capabilities."""
+    if not consumes:
+        return []
+
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT r.key, r.value, r.type, r.sensitive
+            FROM app_registry r
+            JOIN installed_apps p ON p.id = r.provider_id
+            WHERE r.key IN ({})
+        """.format(",".join("?" * len(consumes))),
+            [c.get("key") if isinstance(c, dict) else str(c) for c in consumes]
+        ) as cur:
+            rows = await cur.fetchall()
+
+    return [dict(r) for r in rows]
+
+
+async def _load_installed_providers() -> list[dict]:
+    """Load all installed apps with their provides declarations, for network inference."""
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT a.id, a.slug, v.provides
+            FROM installed_apps a
+            LEFT JOIN template_versions v ON v.id = a.template_version_id
+            WHERE a.state IN ('running', 'stopped')
+        """) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
 
 
 async def _run_job(job_id: str, app_id: str, job_type: str, dry_run: bool) -> None:
@@ -132,7 +199,7 @@ async def _run_job(job_id: str, app_id: str, job_type: str, dry_run: bool) -> No
             await _run_remove(job_id, app_id, app, dry_run)
         else:
             await _add_step(job_id, job_type, "skipped",
-                            f"Job type '{job_type}' not implemented in v1", finished_at=_now())
+                            f"Job type '{job_type}' not implemented", finished_at=_now())
 
         await _set_job_status(job_id, "success")
 
@@ -146,29 +213,93 @@ async def _run_hooks(job_id: str, hooks: dict, event: str, dry_run: bool) -> Non
     if event not in hooks:
         return
     await _add_step(job_id, f"hook:{event}", "success",
-                    f"[DRY/DUMMY] hook '{event}' — no-op in v1", finished_at=_now())
+                    f"[placeholder] hook '{event}' — declarative hook execution not yet implemented",
+                    finished_at=_now())
+
+
+def _is_passthrough(app: dict) -> bool:
+    return bool(app.get("has_passthrough", 0))
+
+
+async def _compile_and_render(job_id: str, app_id: str, app: dict) -> tuple[str, str, str, str]:
+    """
+    Run the ECB + renderer pipeline for schema_version 2 apps.
+    Returns (compose_yaml, env_content, ir_hash, compose_hash).
+    """
+    service_definitions = app.get("service_definitions", "")
+    if not service_definitions:
+        raise RuntimeError("No service_definitions found — template may not have been synced as schema_version 2")
+
+    from app.models.template import TemplateModel
+    template_model = TemplateModel.model_validate_json(service_definitions)
+
+    global_settings = await _load_global_settings()
+
+    consumes_raw = app.get("consumes", [])
+    if isinstance(consumes_raw, str):
+        try:
+            consumes_raw = json.loads(consumes_raw)
+        except Exception:
+            consumes_raw = []
+
+    registry_entries = await _load_registry_entries(app_id, consumes_raw)
+    installed_providers = await _load_installed_providers()
+
+    app_ir = compile_app(
+        template=template_model,
+        user_config=app.get("config", {}),
+        global_settings=global_settings,
+        registry_entries=registry_entries,
+        installed_providers=installed_providers,
+        app_slug=app["slug"],
+    )
+
+    renderer = ComposeRenderer(app_ir)
+    compose_yaml, env_content = renderer.render()
+    compose_hash = renderer.compose_hash()
+
+    return compose_yaml, env_content, app_ir.ir_hash, compose_hash
 
 
 async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> None:
     hooks = app.get("hook_definitions", {})
     slug = app["slug"]
-    config = app.get("config", {})
-    schema = app.get("config_schema", [])
 
-    await _add_step(job_id, "render_compose", "running", "Rendering docker-compose.yml from template")
-    rendered = render_compose(app["compose_template"], config, schema, slug)
-    env_content = build_env_file_content(config, schema, slug)
-    await _add_step(job_id, "render_compose", "success", "Compose file rendered", finished_at=_now())
+    if _is_passthrough(app):
+        await _add_step(job_id, "render_compose", "running",
+                        "Rendering docker-compose.yml (legacy passthrough)")
+        config = app.get("config", {})
+        schema = app.get("config_schema", [])
+        rendered = _legacy_render_compose(app["compose_template"], config, schema, slug)
+        env_content = _legacy_build_env(config, schema, slug)
+        ir_hash = ""
+        compose_hash = ""
+        await _add_step(job_id, "render_compose", "success",
+                        "Compose file rendered (passthrough)", finished_at=_now())
+    else:
+        await _add_step(job_id, "compile_ir", "running",
+                        "Compiling application IR from template")
+        compose_yaml, env_content, ir_hash, compose_hash = await _compile_and_render(
+            job_id, app_id, app
+        )
+        rendered = compose_yaml
+        await _add_step(job_id, "compile_ir", "success",
+                        f"IR compiled (hash: {ir_hash[:12]}...)", finished_at=_now())
 
     if not dry_run:
-        await _add_step(job_id, "write_compose", "running", "Writing docker-compose.yml and .env to disk")
+        await _add_step(job_id, "write_compose", "running",
+                        "Writing docker-compose.yml and .env to disk")
         compose_path, env_path = write_compose_files(slug, rendered, env_content)
+
         async with get_db() as db:
             await db.execute(
-                "UPDATE installed_apps SET compose_path = ? WHERE id = ?",
-                (compose_path, app_id),
+                """UPDATE installed_apps
+                   SET compose_path = ?, ir_hash = ?, compose_hash = ?
+                   WHERE id = ?""",
+                (compose_path, ir_hash, compose_hash, app_id),
             )
             await db.commit()
+
         await _add_step(job_id, "write_compose", "success",
                         f"Written: {compose_path}\nWritten: {env_path}", finished_at=_now())
 
@@ -178,7 +309,8 @@ async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> No
         await _add_step(job_id, "docker_up", "running", "Running docker compose up -d")
         result = await _docker_compose(compose_path, ["up", "-d"])
         status = "success" if result.returncode == 0 else "failed"
-        await _add_step(job_id, "docker_up", status, result.stdout + result.stderr, finished_at=_now())
+        await _add_step(job_id, "docker_up", status,
+                        result.stdout + result.stderr, finished_at=_now())
         if result.returncode != 0:
             raise RuntimeError("docker compose up failed")
 
@@ -189,23 +321,24 @@ async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> No
 async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> None:
     hooks = app.get("hook_definitions", {})
     slug = app["slug"]
-    config = app.get("config", {})
-    schema = app.get("config_schema", [])
     compose_path = app.get("compose_path", "")
 
     await _run_hooks(job_id, hooks, "pre_update", dry_run)
 
-    env_content = build_env_file_content(config, schema, slug)
-    non_env_fields = {f["key"] for f in schema if not f.get("env_key")}
-    require_rewrite = bool(non_env_fields) or not compose_path or not Path(compose_path).exists()
+    if _is_passthrough(app):
+        config = app.get("config", {})
+        schema = app.get("config_schema", [])
+        env_content = _legacy_build_env(config, schema, slug)
 
-    if not dry_run:
-        if require_rewrite:
-            await _add_step(job_id, "render_compose", "running", "Re-rendering docker-compose.yml")
-            rendered = render_compose(app["compose_template"], config, schema, slug)
-            await _add_step(job_id, "render_compose", "success", "Compose file rendered", finished_at=_now())
+        if not dry_run:
+            await _add_step(job_id, "render_compose", "running",
+                            "Re-rendering docker-compose.yml (legacy passthrough)")
+            rendered = _legacy_render_compose(app["compose_template"], config, schema, slug)
+            await _add_step(job_id, "render_compose", "success",
+                            "Compose file rendered", finished_at=_now())
 
-            await _add_step(job_id, "write_compose", "running", "Writing docker-compose.yml and .env")
+            await _add_step(job_id, "write_compose", "running",
+                            "Writing docker-compose.yml and .env")
             compose_path, env_path = write_compose_files(slug, rendered, env_content)
             async with get_db() as db:
                 await db.execute(
@@ -214,22 +347,43 @@ async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
                 )
                 await db.commit()
             await _add_step(job_id, "write_compose", "success",
-                            f"Written: {compose_path}\nWritten: {env_path}", finished_at=_now())
-        else:
-            await _add_step(job_id, "write_env", "running",
-                            "Updating .env (all fields are env-interpolated)")
-            env_path = write_env_only(slug, env_content)
-            await _add_step(job_id, "write_env", "success", f"Written: {env_path}", finished_at=_now())
+                            f"Written: {compose_path}", finished_at=_now())
+    else:
+        if not dry_run:
+            await _add_step(job_id, "compile_ir", "running",
+                            "Re-compiling application IR")
+            compose_yaml, env_content, ir_hash, compose_hash = await _compile_and_render(
+                job_id, app_id, app
+            )
+            await _add_step(job_id, "compile_ir", "success",
+                            f"IR compiled (hash: {ir_hash[:12]}...)", finished_at=_now())
 
+            await _add_step(job_id, "write_compose", "running",
+                            "Writing docker-compose.yml and .env")
+            compose_path, env_path = write_compose_files(slug, compose_yaml, env_content)
+            async with get_db() as db:
+                await db.execute(
+                    """UPDATE installed_apps
+                       SET compose_path = ?, ir_hash = ?, compose_hash = ?
+                       WHERE id = ?""",
+                    (compose_path, ir_hash, compose_hash, app_id),
+                )
+                await db.commit()
+            await _add_step(job_id, "write_compose", "success",
+                            f"Written: {compose_path}", finished_at=_now())
+
+    if not dry_run:
         await _add_step(job_id, "docker_pull", "running", "Pulling latest images")
         result = await _docker_compose(compose_path, ["pull"])
-        await _add_step(job_id, "docker_pull", "success" if result.returncode == 0 else "failed",
+        await _add_step(job_id, "docker_pull",
+                        "success" if result.returncode == 0 else "failed",
                         result.stdout + result.stderr, finished_at=_now())
 
         await _add_step(job_id, "docker_up", "running", "Running docker compose up -d")
         result = await _docker_compose(compose_path, ["up", "-d"])
         status = "success" if result.returncode == 0 else "failed"
-        await _add_step(job_id, "docker_up", status, result.stdout + result.stderr, finished_at=_now())
+        await _add_step(job_id, "docker_up", status,
+                        result.stdout + result.stderr, finished_at=_now())
         if result.returncode != 0:
             raise RuntimeError("docker compose up failed during update")
 
@@ -242,8 +396,8 @@ async def _run_remove(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
     slug = app.get("slug", "")
 
     if not dry_run and compose_path and Path(compose_path).exists():
-        # Collect image IDs before stopping so we can remove them precisely.
-        await _add_step(job_id, "collect_images", "running", "Collecting image IDs for this app")
+        await _add_step(job_id, "collect_images", "running",
+                        "Collecting image IDs for this app")
         img_result = await _docker_compose(compose_path, ["images", "-q"])
         image_ids = [line.strip() for line in img_result.stdout.splitlines() if line.strip()]
         await _add_step(job_id, "collect_images", "success",
@@ -253,7 +407,8 @@ async def _run_remove(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
         await _add_step(job_id, "docker_down", "running", "Running docker compose down")
         result = await _docker_compose(compose_path, ["down"])
         status = "success" if result.returncode == 0 else "failed"
-        await _add_step(job_id, "docker_down", status, result.stdout + result.stderr, finished_at=_now())
+        await _add_step(job_id, "docker_down", status,
+                        result.stdout + result.stderr, finished_at=_now())
 
         if image_ids:
             await _add_step(job_id, "remove_images", "running",
@@ -274,7 +429,8 @@ async def _run_remove(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
             except Exception as exc:
                 await _add_step(job_id, "remove_files", "failed", str(exc), finished_at=_now())
 
-    await _add_step(job_id, "cleanup_db", "running", "Removing app record from database")
+    await _add_step(job_id, "cleanup_db", "running",
+                    "Removing app record from database")
     async with get_db() as db:
         await db.execute("DELETE FROM installed_apps WHERE id = ?", (app_id,))
         await db.commit()

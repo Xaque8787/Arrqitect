@@ -1,46 +1,67 @@
-schema_version: 1
-slug: prowlarr
-name: Prowlarr
-version: 1.0.0
+schema_version: 2
+
+app:
+  id: prowlarr
+  name: Prowlarr
+  version: "1.0.0"
+  flavor: linuxserver
+
 description: Indexer manager and proxy for Radarr, Sonarr and other *arr apps.
 icon_url: https://raw.githubusercontent.com/Prowlarr/Prowlarr/develop/Logo/256.png
 
+services:
+  - id: prowlarr
+    image:
+      repository: lscr.io/linuxserver/prowlarr
+      tag: latest
+
+    networking:
+      ports:
+        - id: web_ui
+          listen_port: 9696
+          protocol: http
+          reachability: external
+
+    storage:
+      - id: config
+        persistence: persistent
+        sharing: private
+        mutability: read-write
+        durability: configuration
+        container_path: /config
+
+    lifecycle:
+      restart:
+        behavior: persistent
+
 provides:
-  - indexer
+  - key: prowlarr.url_internal
+    type: endpoint
+    sensitive: false
+    rotates: false
+
+  - key: prowlarr.api_key
+    type: credential
+    sensitive: true
+    rotates: true
 
 consumes: []
 
 config_schema:
-  - key: host_port
-    label: Host Port
-    type: number
+  - id: web_ui_port
+    label: Web UI Port
+    type: port
     default: 9696
-    env_key: HOST_PORT
+    binds_to: services.prowlarr.networking.ports.web_ui.published_port
     required: true
 
-  - key: config
-    label: Config
-    type: volume_mount
+  - id: config_path
+    label: Config Path
+    type: storage_path
     default: ./config
-    container_path: /config
-    env_key: CONFIG_PATH
+    binds_to: services.prowlarr.storage.config.host_path
     required: true
 
 hooks:
   post_install: hooks/post_install.yaml
   pre_remove: hooks/pre_remove.yaml
-
-compose: |
-  services:
-    prowlarr:
-      image: lscr.io/linuxserver/prowlarr:latest
-      container_name: prowlarr
-      environment:
-        - PUID=${PUID:-1000}
-        - PGID=${PGID:-1000}
-        - TZ=${TZ:-UTC}
-      volumes:
-        - ${CONFIG_PATH:-./config}:/config
-      ports:
-        - ${HOST_PORT:-9696}:9696
-      restart: unless-stopped

@@ -28,17 +28,19 @@ CREATE TABLE IF NOT EXISTS app_templates (
 );
 
 CREATE TABLE IF NOT EXISTS template_versions (
-    id               TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-    template_id      TEXT NOT NULL REFERENCES app_templates(id) ON DELETE CASCADE,
-    version          TEXT NOT NULL,
-    schema_version   INTEGER NOT NULL DEFAULT 1,
-    content_hash     TEXT NOT NULL,
-    compose          TEXT NOT NULL DEFAULT '',
-    config_schema    TEXT NOT NULL DEFAULT '[]',
-    hook_definitions TEXT NOT NULL DEFAULT '{}',
-    provides         TEXT NOT NULL DEFAULT '[]',
-    consumes         TEXT NOT NULL DEFAULT '[]',
-    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    id                  TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    template_id         TEXT NOT NULL REFERENCES app_templates(id) ON DELETE CASCADE,
+    version             TEXT NOT NULL,
+    schema_version      INTEGER NOT NULL DEFAULT 1,
+    content_hash        TEXT NOT NULL,
+    compose             TEXT NOT NULL DEFAULT '',
+    config_schema       TEXT NOT NULL DEFAULT '[]',
+    hook_definitions    TEXT NOT NULL DEFAULT '{}',
+    provides            TEXT NOT NULL DEFAULT '[]',
+    consumes            TEXT NOT NULL DEFAULT '[]',
+    service_definitions TEXT NOT NULL DEFAULT '',
+    has_passthrough     INTEGER NOT NULL DEFAULT 0,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE (template_id, version)
 );
 
@@ -53,9 +55,24 @@ CREATE TABLE IF NOT EXISTS installed_apps (
     config              TEXT NOT NULL DEFAULT '{}',
     state               TEXT NOT NULL DEFAULT 'stopped'
                             CHECK (state IN ('installing','running','stopped','error','removing')),
-    compose_path TEXT NOT NULL DEFAULT '',
-    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    compose_path        TEXT NOT NULL DEFAULT '',
+    ir_hash             TEXT NOT NULL DEFAULT '',
+    compose_hash        TEXT NOT NULL DEFAULT '',
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS app_registry (
+    id           TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    provider_id  TEXT NOT NULL REFERENCES installed_apps(id) ON DELETE CASCADE,
+    key          TEXT NOT NULL,
+    value        TEXT NOT NULL DEFAULT '',
+    type         TEXT NOT NULL DEFAULT 'metadata'
+                     CHECK (type IN ('credential','endpoint','metadata','feature-flag')),
+    sensitive    INTEGER NOT NULL DEFAULT 0,
+    rotates      INTEGER NOT NULL DEFAULT 0,
+    published_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE (provider_id, key)
 );
 
 CREATE TABLE IF NOT EXISTS runtime_dependencies (
@@ -97,6 +114,8 @@ CREATE INDEX IF NOT EXISTS idx_runtime_deps_provider   ON runtime_dependencies(p
 CREATE INDEX IF NOT EXISTS idx_jobs_app                ON jobs(installed_app_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status             ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_job_steps_job           ON job_steps(job_id);
+CREATE INDEX IF NOT EXISTS idx_registry_key            ON app_registry(key);
+CREATE INDEX IF NOT EXISTS idx_registry_provider       ON app_registry(provider_id);
 
 CREATE TABLE IF NOT EXISTS global_settings (
     key        TEXT PRIMARY KEY,

@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.db.client import get_db
 from app.services.job_runner import enqueue_job
-from app.services.ecb import preview_app
+from app.services.ecb_legacy import preview_app
 
 router = APIRouter(prefix="/api/apps", tags=["apps"])
 

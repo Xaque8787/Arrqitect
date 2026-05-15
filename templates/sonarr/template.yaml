@@ -1,64 +1,89 @@
-schema_version: 1
-slug: sonarr
-name: Sonarr
-version: 1.0.0
+schema_version: 2
+
+app:
+  id: sonarr
+  name: Sonarr
+  version: "1.0.0"
+  flavor: linuxserver
+
 description: TV series collection manager. Pairs with Prowlarr for indexer management.
 icon_url: https://raw.githubusercontent.com/Sonarr/Sonarr/develop/Logo/256.png
+
+services:
+  - id: sonarr
+    image:
+      repository: lscr.io/linuxserver/sonarr
+      tag: latest
+
+    networking:
+      ports:
+        - id: web_ui
+          listen_port: 8989
+          protocol: http
+          reachability: external
+
+    storage:
+      - id: config
+        persistence: persistent
+        sharing: private
+        mutability: read-write
+        durability: configuration
+        container_path: /config
+
+      - id: tv
+        persistence: persistent
+        sharing: shared
+        mutability: read-write
+        durability: user-data
+        container_path: /tv
+
+      - id: downloads
+        persistence: persistent
+        sharing: shared
+        mutability: read-write
+        durability: transient
+        container_path: /downloads
+
+    lifecycle:
+      restart:
+        behavior: persistent
 
 provides: []
 
 consumes:
-  - indexer
+  - key: prowlarr.api_key
+    required: false
+    connectivity: false
 
 config_schema:
-  - key: host_port
-    label: Host Port
-    type: number
+  - id: web_ui_port
+    label: Web UI Port
+    type: port
     default: 8989
-    env_key: HOST_PORT
+    binds_to: services.sonarr.networking.ports.web_ui.published_port
     required: true
 
-  - key: config
-    label: Config
-    type: volume_mount
+  - id: config_path
+    label: Config Path
+    type: storage_path
     default: ./config
-    container_path: /config
-    env_key: CONFIG_PATH
+    binds_to: services.sonarr.storage.config.host_path
     required: true
 
-  - key: tv
-    label: TV
-    type: volume_mount
-    default: ./tv
-    container_path: /tv
-    env_key: TV_PATH
+  - id: tv_path
+    label: TV Path
+    type: storage_path
+    default: /data/tv
+    binds_to: services.sonarr.storage.tv.host_path
     required: true
 
-  - key: downloads
-    label: Downloads
-    type: volume_mount
-    default: ./downloads
-    container_path: /downloads
-    env_key: DOWNLOADS_PATH
+  - id: downloads_path
+    label: Downloads Path
+    type: storage_path
+    default: /data/downloads
+    binds_to: services.sonarr.storage.downloads.host_path
     required: true
 
 hooks:
   post_install: hooks/post_install.yaml
   pre_remove: hooks/pre_remove.yaml
-
-compose: |
-  services:
-    sonarr:
-      image: lscr.io/linuxserver/sonarr:latest
-      container_name: sonarr
-      environment:
-        - PUID=${PUID:-1000}
-        - PGID=${PGID:-1000}
-        - TZ=${TZ:-UTC}
-      volumes:
-        - ${CONFIG_PATH:-./config}:/config
-        - ${TV_PATH:-./tv}:/tv
-        - ${DOWNLOADS_PATH:-./downloads}:/downloads
-      ports:
-        - ${HOST_PORT:-8989}:8989
-      restart: unless-stopped

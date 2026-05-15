@@ -5,17 +5,21 @@ Fetches template definitions from a remote repository URL (or local filesystem
 fallback), validates them, hashes the canonical payload, and writes immutable
 template_versions records into the catalog.
 
+Schema version dispatch:
+  - schema_version 2: parsed via ECB parser into a TemplateModel, stored with
+    service_definitions populated and has_passthrough=0. The compose column is
+    left empty — rendering is done at install time by the ECB + renderer pipeline.
+  - schema_version 1 (legacy): stored as compose passthrough. has_passthrough=1.
+    The compose column holds the raw compose string for the legacy render path.
+
 Flow per template:
   1. Fetch index.json  → list of slugs + paths
   2. For each slug: fetch template.yaml
-  3. Structural validation (required fields, known schema_version, semver)
+  3. Validate (schema_version dispatch)
   4. Compute content_hash over canonical payload
   5. Skip if (template_id, version) + same hash already exists (no-op)
   6. Reject overwrite if same (template_id, version) but different hash
   7. Write new template_version row; update app_templates catalog row
-
-The runtime (ECB, job_runner) reads only from template_versions — never from
-the raw source again after ingestion.
 """
 
 import hashlib
@@ -29,8 +33,9 @@ import httpx
 import yaml
 
 from app.db.client import get_sync_conn
+from app.services.ecb.parser import parse_template, PassthroughTemplate, ParseError
 
-SUPPORTED_SCHEMA_VERSIONS = {1}
+SUPPORTED_SCHEMA_VERSIONS = {1, 2}
 DEFAULT_REPO_URL = "https://raw.githubusercontent.com/Xaque8787/Arrqitect/dev/templates"
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -52,29 +57,15 @@ def _content_hash(payload: dict) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def _validate_template(raw: dict) -> None:
+def _validate_v1(raw: dict) -> None:
     required = ["schema_version", "slug", "name", "version", "compose", "config_schema"]
     for field in required:
         if field not in raw:
             raise SyncError(f"Missing required field: {field}")
-
-    sv = raw["schema_version"]
-    if sv not in SUPPORTED_SCHEMA_VERSIONS:
-        raise SyncError(
-            f"Unsupported schema_version {sv!r}. "
-            f"Supported: {sorted(SUPPORTED_SCHEMA_VERSIONS)}"
-        )
-
     if not SEMVER_RE.match(str(raw["version"])):
         raise SyncError(f"version must be semver (x.y.z), got: {raw['version']!r}")
-
     if not isinstance(raw["config_schema"], list):
         raise SyncError("config_schema must be a list")
-
-    for i, field in enumerate(raw["config_schema"]):
-        for f in ("key", "label", "type"):
-            if f not in field:
-                raise SyncError(f"config_schema[{i}] missing field: {f!r}")
 
 
 def _fetch_text(url_or_path: str, client: httpx.Client | None) -> str:
@@ -82,34 +73,120 @@ def _fetch_text(url_or_path: str, client: httpx.Client | None) -> str:
         resp = client.get(url_or_path, timeout=15)
         resp.raise_for_status()
         return resp.text
-    # local filesystem fallback
     from pathlib import Path
     return Path(url_or_path).read_text()
 
 
-def _build_hook_definitions(raw_hooks: dict) -> dict:
-    """Convert hooks map (event → path) to hook_definitions (event → description).
-    Hook YAML files contain a description field. For Phase 1, we store the
-    description string. The compiled steps list is stored separately for Phase 2.
-    """
-    return {event: path for event, path in raw_hooks.items()}
-
-
-def _ingest_template(raw: dict, source_url: str, conn) -> dict:
+def _ingest_template(raw_text: str, source_url: str, conn) -> dict:
     """
     Validate, hash, and write one template version into the DB.
+    Dispatches on schema_version.
     Returns a status dict describing what happened.
     """
-    _validate_template(raw)
+    raw = yaml.safe_load(raw_text)
+    if not isinstance(raw, dict):
+        raise SyncError("Template must be a YAML mapping")
 
-    slug = raw["slug"]
-    version = str(raw["version"])
-    schema_version = int(raw["schema_version"])
+    sv = raw.get("schema_version", 1)
+
+    if sv == 2:
+        return _ingest_v2(raw_text, raw, source_url, conn)
+    elif sv == 1:
+        return _ingest_v1(raw, source_url, conn)
+    else:
+        raise SyncError(f"Unsupported schema_version: {sv!r}")
+
+
+def _ingest_v2(raw_text: str, raw: dict, source_url: str, conn) -> dict:
+    """Ingest a schema_version 2 template via ECB parser."""
+    try:
+        template_model = parse_template(raw_text)
+    except ParseError as exc:
+        raise SyncError(f"Template parse error: {exc}") from exc
+
+    slug = template_model.app.id
+    version = template_model.app.version
+    name = template_model.app.name
+
+    if not SEMVER_RE.match(version):
+        raise SyncError(f"version must be semver (x.y.z), got: {version!r}")
+
+    service_definitions = template_model.model_dump_json()
 
     canonical_payload = {
         "slug": slug,
         "version": version,
-        "schema_version": schema_version,
+        "schema_version": 2,
+        "service_definitions": service_definitions,
+        "provides": [p.model_dump() for p in template_model.provides],
+        "consumes": [c.model_dump() for c in template_model.consumes],
+    }
+    content_hash = _content_hash(canonical_payload)
+
+    provides_json = json.dumps([p.model_dump() for p in template_model.provides])
+    consumes_json = json.dumps([c.model_dump() for c in template_model.consumes])
+    config_schema_json = json.dumps([f.model_dump() for f in template_model.config_schema])
+    hooks_json = json.dumps(template_model.hooks)
+    description = raw.get("description", "")
+    icon_url = raw.get("icon_url", "")
+
+    template_id = _upsert_app_template(
+        conn, slug, name, description, icon_url, source_url,
+        compose_template="",
+        config_schema=config_schema_json,
+        hook_definitions=hooks_json,
+        provides=provides_json,
+    )
+
+    existing_ver = conn.execute(
+        "SELECT id, content_hash FROM template_versions WHERE template_id = ? AND version = ?",
+        (template_id, version),
+    ).fetchone()
+
+    if existing_ver:
+        if existing_ver[1] == content_hash:
+            conn.execute(
+                "UPDATE app_templates SET latest_version = ? WHERE id = ?",
+                (version, template_id),
+            )
+            return {"slug": slug, "version": version, "status": "unchanged"}
+        raise ImmutabilityViolation(
+            f"{slug}@{version} already published with a different content hash. "
+            "Bump the version number."
+        )
+
+    version_id = secrets.token_hex(16)
+    conn.execute("""
+        INSERT INTO template_versions
+            (id, template_id, version, schema_version, content_hash,
+             compose, config_schema, hook_definitions, provides, consumes,
+             service_definitions, has_passthrough)
+        VALUES (?, ?, ?, 2, ?, '', ?, ?, ?, ?, ?, 0)
+    """, (
+        version_id, template_id, version, content_hash,
+        config_schema_json, hooks_json, provides_json, consumes_json,
+        service_definitions,
+    ))
+
+    conn.execute(
+        "UPDATE app_templates SET latest_version = ? WHERE id = ?",
+        (version, template_id),
+    )
+
+    return {"slug": slug, "version": version, "status": "added"}
+
+
+def _ingest_v1(raw: dict, source_url: str, conn) -> dict:
+    """Ingest a schema_version 1 (legacy passthrough) template."""
+    _validate_v1(raw)
+
+    slug = raw["slug"]
+    version = str(raw["version"])
+
+    canonical_payload = {
+        "slug": slug,
+        "version": version,
+        "schema_version": 1,
         "compose": raw["compose"],
         "config_schema": raw["config_schema"],
         "hook_definitions": raw.get("hooks", {}),
@@ -118,7 +195,62 @@ def _ingest_template(raw: dict, source_url: str, conn) -> dict:
     }
     content_hash = _content_hash(canonical_payload)
 
-    # Upsert app_templates catalog row (name/description/icon can change freely)
+    template_id = _upsert_app_template(
+        conn, slug, raw["name"],
+        raw.get("description", ""),
+        raw.get("icon_url", ""),
+        source_url,
+        compose_template=raw["compose"],
+        config_schema=json.dumps(raw["config_schema"]),
+        hook_definitions=json.dumps(raw.get("hooks", {})),
+        provides=json.dumps(raw.get("provides", [])),
+    )
+
+    existing_ver = conn.execute(
+        "SELECT id, content_hash FROM template_versions WHERE template_id = ? AND version = ?",
+        (template_id, version),
+    ).fetchone()
+
+    if existing_ver:
+        if existing_ver[1] == content_hash:
+            conn.execute(
+                "UPDATE app_templates SET latest_version = ? WHERE id = ?",
+                (version, template_id),
+            )
+            return {"slug": slug, "version": version, "status": "unchanged"}
+        raise ImmutabilityViolation(
+            f"{slug}@{version} already published with a different content hash. "
+            "Bump the version number."
+        )
+
+    version_id = secrets.token_hex(16)
+    conn.execute("""
+        INSERT INTO template_versions
+            (id, template_id, version, schema_version, content_hash,
+             compose, config_schema, hook_definitions, provides, consumes,
+             service_definitions, has_passthrough)
+        VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, '', 1)
+    """, (
+        version_id, template_id, version, content_hash,
+        raw["compose"],
+        json.dumps(raw["config_schema"]),
+        json.dumps(raw.get("hooks", {})),
+        json.dumps(raw.get("provides", [])),
+        json.dumps(raw.get("consumes", [])),
+    ))
+
+    conn.execute(
+        "UPDATE app_templates SET latest_version = ? WHERE id = ?",
+        (version, template_id),
+    )
+
+    return {"slug": slug, "version": version, "status": "added"}
+
+
+def _upsert_app_template(
+    conn, slug: str, name: str, description: str, icon_url: str, source_url: str,
+    compose_template: str, config_schema: str, hook_definitions: str, provides: str,
+) -> str:
     existing = conn.execute(
         "SELECT id FROM app_templates WHERE slug = ?", (slug,)
     ).fetchone()
@@ -127,10 +259,10 @@ def _ingest_template(raw: dict, source_url: str, conn) -> dict:
         template_id = existing[0]
         conn.execute("""
             UPDATE app_templates SET
-                name           = ?,
-                description    = ?,
-                icon_url       = ?,
-                source_url     = ?,
+                name             = ?,
+                description      = ?,
+                icon_url         = ?,
+                source_url       = ?,
                 compose_template = ?,
                 config_schema    = ?,
                 hook_definitions = ?,
@@ -138,16 +270,9 @@ def _ingest_template(raw: dict, source_url: str, conn) -> dict:
                 updated_at       = ?
             WHERE id = ?
         """, (
-            raw["name"],
-            raw.get("description", ""),
-            raw.get("icon_url", ""),
-            source_url,
-            raw["compose"],
-            json.dumps(raw["config_schema"]),
-            json.dumps(raw.get("hooks", {})),
-            json.dumps(raw.get("provides", [])),
-            _now(),
-            template_id,
+            name, description, icon_url, source_url,
+            compose_template, config_schema, hook_definitions, provides,
+            _now(), template_id,
         ))
     else:
         template_id = secrets.token_hex(16)
@@ -157,65 +282,11 @@ def _ingest_template(raw: dict, source_url: str, conn) -> dict:
                  compose_template, config_schema, hook_definitions, provides)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            template_id,
-            slug,
-            raw["name"],
-            raw.get("description", ""),
-            raw.get("icon_url", ""),
-            source_url,
-            raw["compose"],
-            json.dumps(raw["config_schema"]),
-            json.dumps(raw.get("hooks", {})),
-            json.dumps(raw.get("provides", [])),
+            template_id, slug, name, description, icon_url, source_url,
+            compose_template, config_schema, hook_definitions, provides,
         ))
 
-    # Check for existing version record
-    existing_ver = conn.execute(
-        "SELECT id, content_hash FROM template_versions WHERE template_id = ? AND version = ?",
-        (template_id, version),
-    ).fetchone()
-
-    if existing_ver:
-        if existing_ver[1] == content_hash:
-            # Nothing changed — update latest_version pointer and skip
-            conn.execute(
-                "UPDATE app_templates SET latest_version = ? WHERE id = ?",
-                (version, template_id),
-            )
-            return {"slug": slug, "version": version, "status": "unchanged"}
-        else:
-            raise ImmutabilityViolation(
-                f"{slug}@{version} already published with a different content hash. "
-                "Published versions are immutable. Bump the version number."
-            )
-
-    # New version — write it
-    version_id = secrets.token_hex(16)
-    conn.execute("""
-        INSERT INTO template_versions
-            (id, template_id, version, schema_version, content_hash,
-             compose, config_schema, hook_definitions, provides, consumes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        version_id,
-        template_id,
-        version,
-        schema_version,
-        content_hash,
-        raw["compose"],
-        json.dumps(raw["config_schema"]),
-        json.dumps(raw.get("hooks", {})),
-        json.dumps(raw.get("provides", [])),
-        json.dumps(raw.get("consumes", [])),
-    ))
-
-    # Update latest_version on the catalog row
-    conn.execute(
-        "UPDATE app_templates SET latest_version = ? WHERE id = ?",
-        (version, template_id),
-    )
-
-    return {"slug": slug, "version": version, "status": "added"}
+    return template_id
 
 
 def sync_templates(repo_url: str | None = None) -> dict:
@@ -232,7 +303,6 @@ def sync_templates(repo_url: str | None = None) -> dict:
 
     try:
         with httpx.Client(follow_redirects=True) as client:
-            # Step 1: fetch index
             index_url = f"{repo_url}/index.json"
             try:
                 index_text = _fetch_text(index_url, client)
@@ -241,14 +311,6 @@ def sync_templates(repo_url: str | None = None) -> dict:
                 return {
                     "ok": False,
                     "error": f"Failed to fetch index from {index_url}: {exc}",
-                    "results": [],
-                }
-
-            index_sv = index.get("schema_version", 1)
-            if index_sv not in SUPPORTED_SCHEMA_VERSIONS:
-                return {
-                    "ok": False,
-                    "error": f"Unsupported index schema_version: {index_sv}",
                     "results": [],
                 }
 
@@ -262,8 +324,7 @@ def sync_templates(repo_url: str | None = None) -> dict:
                     template_url = f"{repo_url}/{path}"
                     try:
                         raw_text = _fetch_text(template_url, client)
-                        raw = yaml.safe_load(raw_text)
-                        result = _ingest_template(raw, template_url, conn)
+                        result = _ingest_template(raw_text, template_url, conn)
                         results.append(result)
                     except ImmutabilityViolation as exc:
                         errors.append({"slug": slug, "error": str(exc)})

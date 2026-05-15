@@ -1,64 +1,89 @@
-schema_version: 1
-slug: radarr
-name: Radarr
-version: 1.0.0
+schema_version: 2
+
+app:
+  id: radarr
+  name: Radarr
+  version: "1.0.0"
+  flavor: linuxserver
+
 description: Movie collection manager. Pairs with Prowlarr for indexer management.
 icon_url: https://raw.githubusercontent.com/Radarr/Radarr/develop/Logo/256.png
+
+services:
+  - id: radarr
+    image:
+      repository: lscr.io/linuxserver/radarr
+      tag: latest
+
+    networking:
+      ports:
+        - id: web_ui
+          listen_port: 7878
+          protocol: http
+          reachability: external
+
+    storage:
+      - id: config
+        persistence: persistent
+        sharing: private
+        mutability: read-write
+        durability: configuration
+        container_path: /config
+
+      - id: movies
+        persistence: persistent
+        sharing: shared
+        mutability: read-write
+        durability: user-data
+        container_path: /movies
+
+      - id: downloads
+        persistence: persistent
+        sharing: shared
+        mutability: read-write
+        durability: transient
+        container_path: /downloads
+
+    lifecycle:
+      restart:
+        behavior: persistent
 
 provides: []
 
 consumes:
-  - indexer
+  - key: prowlarr.api_key
+    required: false
+    connectivity: false
 
 config_schema:
-  - key: host_port
-    label: Host Port
-    type: number
+  - id: web_ui_port
+    label: Web UI Port
+    type: port
     default: 7878
-    env_key: HOST_PORT
+    binds_to: services.radarr.networking.ports.web_ui.published_port
     required: true
 
-  - key: config
-    label: Config
-    type: volume_mount
+  - id: config_path
+    label: Config Path
+    type: storage_path
     default: ./config
-    container_path: /config
-    env_key: CONFIG_PATH
+    binds_to: services.radarr.storage.config.host_path
     required: true
 
-  - key: movies
-    label: Movies
-    type: volume_mount
-    default: ./movies
-    container_path: /movies
-    env_key: MOVIES_PATH
+  - id: movies_path
+    label: Movies Path
+    type: storage_path
+    default: /data/movies
+    binds_to: services.radarr.storage.movies.host_path
     required: true
 
-  - key: downloads
-    label: Downloads
-    type: volume_mount
-    default: ./downloads
-    container_path: /downloads
-    env_key: DOWNLOADS_PATH
+  - id: downloads_path
+    label: Downloads Path
+    type: storage_path
+    default: /data/downloads
+    binds_to: services.radarr.storage.downloads.host_path
     required: true
 
 hooks:
   post_install: hooks/post_install.yaml
   pre_remove: hooks/pre_remove.yaml
-
-compose: |
-  services:
-    radarr:
-      image: lscr.io/linuxserver/radarr:latest
-      container_name: radarr
-      environment:
-        - PUID=${PUID:-1000}
-        - PGID=${PGID:-1000}
-        - TZ=${TZ:-UTC}
-      volumes:
-        - ${CONFIG_PATH:-./config}:/config
-        - ${MOVIES_PATH:-./movies}:/movies
-        - ${DOWNLOADS_PATH:-./downloads}:/downloads
-      ports:
-        - ${HOST_PORT:-7878}:7878
-      restart: unless-stopped
