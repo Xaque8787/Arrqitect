@@ -3,7 +3,7 @@ schema_version: 2
 app:
   id: sonarr
   name: Sonarr
-  version: "1.0.0"
+  version: "1.1.0"
   flavor: linuxserver
 
 description: TV series collection manager. Pairs with Prowlarr for indexer management.
