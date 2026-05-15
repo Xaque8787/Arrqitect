@@ -21,6 +21,13 @@ export interface ConfigField {
   required: boolean;
 }
 
+export interface CapabilityProvides {
+  key: string;
+  type: string;
+  sensitive: boolean;
+  rotates: boolean;
+}
+
 export interface AppTemplate {
   id: string;
   slug: string;
@@ -33,7 +40,7 @@ export interface AppTemplate {
   compose_template: string;
   config_schema: ConfigField[];
   hook_definitions: Record<string, string>;
-  provides: string[];
+  provides: CapabilityProvides[];
 }
 
 export interface TemplateVersion {

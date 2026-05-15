@@ -267,8 +267,8 @@ export default function Library() {
               <div className="app-card-desc">{tmpl.description}</div>
               <div className="app-card-footer">
                 <div className="app-card-tags">
-                  {(tmpl.provides as string[]).map(p => (
-                    <span key={p} className="tag">{p}</span>
+                  {tmpl.provides.map(p => (
+                    <span key={p.key} className="tag">{p.key}</span>
                   ))}
                 </div>
                 <button className="btn btn-primary btn-sm" onClick={() => setInstalling(tmpl)}>
