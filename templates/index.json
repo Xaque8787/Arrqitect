@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "templates": [
+    {
+      "slug": "prowlarr",
+      "path": "prowlarr/template.yaml"
+    },
+    {
+      "slug": "radarr",
+      "path": "radarr/template.yaml"
+    },
+    {
+      "slug": "sonarr",
+      "path": "sonarr/template.yaml"
+    }
+  ]
+}

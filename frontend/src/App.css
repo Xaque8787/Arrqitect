@@ -303,3 +303,35 @@
 }
 .inline-link { color: var(--color-primary); text-decoration: none; }
 .inline-link:hover { text-decoration: underline; }
+
+/* ── Template version badge ────────────────────────────────── */
+.template-version-badge {
+  display: inline-block; margin-left: 6px; font-size: 10px; font-weight: 600;
+  padding: 1px 5px; border-radius: 3px; background: var(--color-primary-dim);
+  color: var(--color-primary); vertical-align: middle;
+}
+
+.modal-version-badge {
+  display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px;
+  border-radius: 20px; background: var(--color-primary-dim); color: var(--color-primary);
+  margin-bottom: 14px;
+}
+
+/* ── Sync banner ───────────────────────────────────────────── */
+.sync-banner {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; border-radius: var(--radius-sm); margin-bottom: 20px;
+  font-size: 13px; gap: 12px; border: 1px solid transparent;
+}
+.sync-banner-ok { background: var(--color-success-dim); color: var(--color-success); border-color: var(--color-success-dim); }
+.sync-banner-warn { background: var(--color-warning-dim); color: var(--color-warning); border-color: var(--color-warning-dim); }
+.sync-banner-content { display: flex; align-items: center; gap: 7px; }
+.sync-banner-errors { opacity: 0.85; }
+.sync-banner-dismiss {
+  background: none; border: none; font-size: 16px; line-height: 1; cursor: pointer;
+  opacity: 0.6; color: inherit; padding: 0 4px; flex-shrink: 0;
+}
+.sync-banner-dismiss:hover { opacity: 1; }
+
+/* ── Spin animation for sync icon ──────────────────────────── */
+.spin { animation: spin 1s linear infinite; }

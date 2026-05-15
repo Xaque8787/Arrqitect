@@ -90,9 +90,14 @@ async def _load_app(app_id: str) -> dict | None:
     import json as _json
     async with get_db() as db:
         async with db.execute("""
-            SELECT a.*, t.compose_template, t.config_schema, t.hook_definitions, t.provides
+            SELECT a.*,
+                   v.compose        AS compose_template,
+                   v.config_schema,
+                   v.hook_definitions,
+                   v.provides
             FROM installed_apps a
             JOIN app_templates t ON t.id = a.template_id
+            LEFT JOIN template_versions v ON v.id = a.template_version_id
             WHERE a.id = ?
         """, (app_id,)) as cur:
             row = await cur.fetchone()

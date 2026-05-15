@@ -1,0 +1,60 @@
+schema_version: 1
+slug: radarr
+name: Radarr
+version: 1.0.0
+description: Movie collection manager. Pairs with Prowlarr for indexer management.
+icon_url: https://raw.githubusercontent.com/Radarr/Radarr/develop/Logo/256.png
+
+provides: []
+
+consumes:
+  - indexer
+
+config_schema:
+  - key: host_port
+    label: Host Port
+    type: number
+    default: 7878
+    required: true
+
+  - key: config
+    label: Config
+    type: volume_mount
+    default: ./config
+    container_path: /config
+    required: true
+
+  - key: movies
+    label: Movies
+    type: volume_mount
+    default: ./movies
+    container_path: /movies
+    required: true
+
+  - key: downloads
+    label: Downloads
+    type: volume_mount
+    default: ./downloads
+    container_path: /downloads
+    required: true
+
+hooks:
+  post_install: hooks/post_install.yaml
+  pre_remove: hooks/pre_remove.yaml
+
+compose: |
+  services:
+    radarr:
+      image: lscr.io/linuxserver/radarr:latest
+      container_name: radarr
+      environment:
+        - PUID={{ puid }}
+        - PGID={{ pgid }}
+        - TZ={{ timezone }}
+      volumes:
+        - {{ config_host }}:{{ config_container }}
+        - {{ movies_host }}:{{ movies_container }}
+        - {{ downloads_host }}:{{ downloads_container }}
+      ports:
+        - {{ host_port }}:7878
+      restart: unless-stopped

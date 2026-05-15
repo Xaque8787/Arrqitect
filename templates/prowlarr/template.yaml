@@ -1,0 +1,44 @@
+schema_version: 1
+slug: prowlarr
+name: Prowlarr
+version: 1.0.0
+description: Indexer manager and proxy for Radarr, Sonarr and other *arr apps.
+icon_url: https://raw.githubusercontent.com/Prowlarr/Prowlarr/develop/Logo/256.png
+
+provides:
+  - indexer
+
+consumes: []
+
+config_schema:
+  - key: host_port
+    label: Host Port
+    type: number
+    default: 9696
+    required: true
+
+  - key: config
+    label: Config
+    type: volume_mount
+    default: ./config
+    container_path: /config
+    required: true
+
+hooks:
+  post_install: hooks/post_install.yaml
+  pre_remove: hooks/pre_remove.yaml
+
+compose: |
+  services:
+    prowlarr:
+      image: lscr.io/linuxserver/prowlarr:latest
+      container_name: prowlarr
+      environment:
+        - PUID={{ puid }}
+        - PGID={{ pgid }}
+        - TZ={{ timezone }}
+      volumes:
+        - {{ config_host }}:{{ config_container }}
+      ports:
+        - {{ host_port }}:9696
+      restart: unless-stopped

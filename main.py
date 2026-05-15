@@ -10,7 +10,7 @@ load_dotenv()
 from app.db.init import init_db
 from app.db.runner import run_migrations
 from app.api import templates, apps, jobs, ws, settings
-from app.services.seeder import seed_templates
+from app.services.template_sync import sync_templates
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 
@@ -19,7 +19,15 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 async def lifespan(application: FastAPI):
     init_db()
     run_migrations()
-    seed_templates()
+    result = sync_templates()
+    if result.get("ok"):
+        added = sum(1 for r in result.get("results", []) if r["status"] == "added")
+        unchanged = sum(1 for r in result.get("results", []) if r["status"] == "unchanged")
+        print(f"[templates] Sync complete — {added} added, {unchanged} unchanged")
+    else:
+        print(f"[templates] Sync warning: {result.get('error', 'partial failure')}")
+        for err in result.get("errors", []):
+            print(f"[templates]   {err['slug']}: {err['error']}")
     yield
 
 

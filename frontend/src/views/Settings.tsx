@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Settings2, RefreshCw } from "lucide-react";
+import { Settings2, RefreshCw, Link } from "lucide-react";
 import { api } from "../api";
 import type { GlobalSettings, ComposeBase } from "../api";
 
@@ -98,6 +98,47 @@ export default function Settings() {
                   placeholder="1000"
                 />
                 <div className="form-hint">Group ID for container file ownership</div>
+              </div>
+            </div>
+
+            {saveError && <div className="settings-msg settings-msg-error">{saveError}</div>}
+            {saved && <div className="settings-msg settings-msg-success">Settings saved.</div>}
+
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button type="submit" className="btn btn-primary" disabled={saving || !isDirty}>
+                {saving
+                  ? <><span className="spinner spinner-sm" /> Saving…</>
+                  : "Save Settings"}
+              </button>
+            </div>
+          </form>
+        </div>
+
+        {/* Template Repository */}
+        <div className="settings-card">
+          <div className="settings-card-title">
+            <Link size={14} />
+            Template Repository
+          </div>
+          <p className="settings-card-desc">
+            URL of the template repository to sync from. Must point to a directory containing
+            an <code>index.json</code> manifest and per-app subdirectories with{" "}
+            <code>template.yaml</code> files. Point this at a fork or community repo to use
+            custom templates.
+          </p>
+          <form onSubmit={handleSubmit}>
+            <div className="form-group">
+              <label className="form-label">Repository URL</label>
+              <input
+                className="form-input"
+                value={form.template_repo_url}
+                onChange={e => setForm(f => f && { ...f, template_repo_url: e.target.value })}
+                placeholder="https://raw.githubusercontent.com/..."
+                spellCheck={false}
+              />
+              <div className="form-hint">
+                Raw file base URL — templates are fetched at <code>[url]/index.json</code> and{" "}
+                <code>[url]/[slug]/template.yaml</code>
               </div>
             </div>
 

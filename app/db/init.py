@@ -12,11 +12,13 @@ from app.db.client import get_sync_conn
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS app_templates (
-    id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-    slug        TEXT UNIQUE NOT NULL,
-    name        TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    icon_url    TEXT NOT NULL DEFAULT '',
+    id             TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    slug           TEXT UNIQUE NOT NULL,
+    name           TEXT NOT NULL,
+    description    TEXT NOT NULL DEFAULT '',
+    icon_url       TEXT NOT NULL DEFAULT '',
+    source_url     TEXT NOT NULL DEFAULT '',
+    latest_version TEXT NOT NULL DEFAULT '',
     compose_template TEXT NOT NULL DEFAULT '',
     config_schema    TEXT NOT NULL DEFAULT '[]',
     hook_definitions TEXT NOT NULL DEFAULT '{}',
@@ -25,17 +27,35 @@ CREATE TABLE IF NOT EXISTS app_templates (
     updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS template_versions (
+    id               TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    template_id      TEXT NOT NULL REFERENCES app_templates(id) ON DELETE CASCADE,
+    version          TEXT NOT NULL,
+    schema_version   INTEGER NOT NULL DEFAULT 1,
+    content_hash     TEXT NOT NULL,
+    compose          TEXT NOT NULL DEFAULT '',
+    config_schema    TEXT NOT NULL DEFAULT '[]',
+    hook_definitions TEXT NOT NULL DEFAULT '{}',
+    provides         TEXT NOT NULL DEFAULT '[]',
+    consumes         TEXT NOT NULL DEFAULT '[]',
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE (template_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_template_versions_template ON template_versions(template_id);
+
 CREATE TABLE IF NOT EXISTS installed_apps (
-    id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-    template_id TEXT NOT NULL REFERENCES app_templates(id),
-    slug        TEXT NOT NULL,
-    name        TEXT NOT NULL,
-    config      TEXT NOT NULL DEFAULT '{}',
-    state       TEXT NOT NULL DEFAULT 'stopped'
-                    CHECK (state IN ('installing','running','stopped','error','removing')),
+    id                  TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    template_id         TEXT NOT NULL REFERENCES app_templates(id),
+    template_version_id TEXT REFERENCES template_versions(id) ON DELETE SET NULL,
+    slug                TEXT NOT NULL,
+    name                TEXT NOT NULL,
+    config              TEXT NOT NULL DEFAULT '{}',
+    state               TEXT NOT NULL DEFAULT 'stopped'
+                            CHECK (state IN ('installing','running','stopped','error','removing')),
     compose_path TEXT NOT NULL DEFAULT '',
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE TABLE IF NOT EXISTS runtime_dependencies (

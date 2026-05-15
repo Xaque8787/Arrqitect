@@ -1,4 +1,5 @@
 import json
+import secrets
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.db.client import get_db
@@ -27,6 +28,7 @@ class InstallRequest(BaseModel):
     template_slug: str
     name: str
     config: dict
+    version: str | None = None  # pin to specific version; defaults to latest
 
 
 class UpdateConfigRequest(BaseModel):
@@ -37,10 +39,14 @@ class UpdateConfigRequest(BaseModel):
 async def list_installed():
     async with get_db() as db:
         async with db.execute("""
-            SELECT a.*, t.slug AS t_slug, t.name AS t_name, t.icon_url AS t_icon_url,
-                   t.config_schema, t.hook_definitions, t.provides
+            SELECT a.*,
+                   t.slug AS t_slug, t.name AS t_name, t.icon_url AS t_icon_url,
+                   t.latest_version,
+                   v.version AS installed_version,
+                   v.config_schema, v.hook_definitions, v.provides
             FROM installed_apps a
             JOIN app_templates t ON t.id = a.template_id
+            LEFT JOIN template_versions v ON v.id = a.template_version_id
             ORDER BY a.name
         """) as cur:
             rows = await cur.fetchall()
@@ -52,6 +58,8 @@ async def list_installed():
             "slug": d.pop("t_slug"),
             "name": d.pop("t_name"),
             "icon_url": d.pop("t_icon_url"),
+            "latest_version": d.pop("latest_version", ""),
+            "installed_version": d.pop("installed_version", None),
             "config_schema": json.loads(d.pop("config_schema")) if isinstance(d.get("config_schema"), str) else d.pop("config_schema", []),
             "hook_definitions": json.loads(d.pop("hook_definitions")) if isinstance(d.get("hook_definitions"), str) else d.pop("hook_definitions", {}),
             "provides": json.loads(d.pop("provides")) if isinstance(d.get("provides"), str) else d.pop("provides", []),
@@ -64,11 +72,15 @@ async def list_installed():
 async def get_installed(app_id: str):
     async with get_db() as db:
         async with db.execute("""
-            SELECT a.*, t.slug AS t_slug, t.name AS t_name, t.icon_url AS t_icon_url,
-                   t.config_schema, t.hook_definitions, t.provides,
-                   t.compose_template
+            SELECT a.*,
+                   t.slug AS t_slug, t.name AS t_name, t.icon_url AS t_icon_url,
+                   t.latest_version,
+                   v.version AS installed_version,
+                   v.config_schema, v.hook_definitions, v.provides,
+                   v.compose AS compose_template
             FROM installed_apps a
             JOIN app_templates t ON t.id = a.template_id
+            LEFT JOIN template_versions v ON v.id = a.template_version_id
             WHERE a.id = ?
         """, (app_id,)) as cur:
             row = await cur.fetchone()
@@ -81,6 +93,8 @@ async def get_installed(app_id: str):
         "slug": d.pop("t_slug"),
         "name": d.pop("t_name"),
         "icon_url": d.pop("t_icon_url"),
+        "latest_version": d.pop("latest_version", ""),
+        "installed_version": d.pop("installed_version", None),
         "config_schema": json.loads(d.pop("config_schema")) if isinstance(d.get("config_schema"), str) else d.pop("config_schema", []),
         "hook_definitions": json.loads(d.pop("hook_definitions")) if isinstance(d.get("hook_definitions"), str) else d.pop("hook_definitions", {}),
         "provides": json.loads(d.pop("provides")) if isinstance(d.get("provides"), str) else d.pop("provides", []),
@@ -101,15 +115,32 @@ async def install_app(req: InstallRequest):
             raise HTTPException(status_code=404, detail="Template not found")
         tmpl = _tmpl_row(tmpl_row)
 
-        app_id = _new_id()
+        # Resolve which version to install — explicit pin or latest
+        target_version = req.version or tmpl.get("latest_version") or None
+        version_id = None
+        if target_version:
+            async with db.execute(
+                "SELECT id FROM template_versions WHERE template_id = ? AND version = ?",
+                (tmpl["id"], target_version),
+            ) as cur:
+                ver_row = await cur.fetchone()
+            if not ver_row:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Template version {target_version!r} not found for {req.template_slug!r}",
+                )
+            version_id = ver_row["id"]
+
+        app_id = secrets.token_hex(16)
         await db.execute("""
-            INSERT INTO installed_apps (id, template_id, slug, name, config, state)
-            VALUES (?, ?, ?, ?, ?, 'installing')
-        """, (app_id, tmpl["id"], req.template_slug, req.name, json.dumps(req.config)))
+            INSERT INTO installed_apps
+                (id, template_id, template_version_id, slug, name, config, state)
+            VALUES (?, ?, ?, ?, ?, ?, 'installing')
+        """, (app_id, tmpl["id"], version_id, req.template_slug, req.name, json.dumps(req.config)))
         await db.commit()
 
     job = await enqueue_job(app_id, "install")
-    return {"app": {"id": app_id, "slug": req.template_slug, "name": req.name}, "job": job}
+    return {"app": {"id": app_id, "slug": req.template_slug, "name": req.name, "version": target_version}, "job": job}
 
 
 @router.put("/{app_id}/config")
@@ -147,10 +178,13 @@ async def remove_app(app_id: str):
 async def preview(app_id: str):
     async with get_db() as db:
         async with db.execute("""
-            SELECT a.*, t.compose_template, t.config_schema, t.hook_definitions, t.provides,
+            SELECT a.*,
+                   v.compose AS compose_template,
+                   v.config_schema, v.hook_definitions, v.provides,
                    t.slug AS t_slug
             FROM installed_apps a
             JOIN app_templates t ON t.id = a.template_id
+            LEFT JOIN template_versions v ON v.id = a.template_version_id
             WHERE a.id = ?
         """, (app_id,)) as cur:
             row = await cur.fetchone()
@@ -166,8 +200,3 @@ async def preview(app_id: str):
         "provides": json.loads(d.pop("provides")) if isinstance(d.get("provides"), str) else d.pop("provides", []),
     }
     return await preview_app(d)
-
-
-def _new_id() -> str:
-    import secrets
-    return secrets.token_hex(16)

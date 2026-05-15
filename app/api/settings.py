@@ -3,6 +3,7 @@ import subprocess
 from fastapi import APIRouter
 from pydantic import BaseModel
 from app.db.client import get_db
+from app.services.template_sync import DEFAULT_REPO_URL
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -10,6 +11,7 @@ DEFAULTS = {
     "timezone": "Etc/UTC",
     "puid": "1000",
     "pgid": "1000",
+    "template_repo_url": DEFAULT_REPO_URL,
 }
 
 

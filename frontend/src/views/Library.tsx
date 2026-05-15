@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Package } from "lucide-react";
+import { Package, RefreshCw, CircleCheck as CheckCircle, CircleAlert as AlertCircle } from "lucide-react";
 import { api, resolveHostPath } from "../api";
-import type { AppTemplate, ConfigField } from "../api";
+import type { AppTemplate, ConfigField, SyncResult } from "../api";
 
 function VolumeMountField({
   field,
@@ -92,6 +92,10 @@ function InstallModal({ template, composeBase, onClose, onInstalled }: {
       <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
         <div className="modal-title">Install {template.name}</div>
 
+        {template.latest_version && (
+          <div className="modal-version-badge">v{template.latest_version}</div>
+        )}
+
         <div className="modal-global-note">
           <span>PUID, PGID, and Timezone are set globally in</span>
           <a href="/settings" className="inline-link" onClick={e => e.stopPropagation()}>Settings</a>
@@ -149,18 +153,71 @@ function InstallModal({ template, composeBase, onClose, onInstalled }: {
   );
 }
 
+function SyncStatusBanner({ result, onDismiss }: { result: SyncResult; onDismiss: () => void }) {
+  const added = result.results.filter(r => r.status === "added").length;
+  const unchanged = result.results.filter(r => r.status === "unchanged").length;
+  const hasErrors = result.errors.length > 0;
+
+  return (
+    <div className={`sync-banner ${hasErrors ? "sync-banner-warn" : "sync-banner-ok"}`}>
+      <div className="sync-banner-content">
+        {hasErrors ? <AlertCircle size={14} /> : <CheckCircle size={14} />}
+        <span>
+          Sync complete —{" "}
+          {added > 0 && <strong>{added} new</strong>}
+          {added > 0 && unchanged > 0 && ", "}
+          {unchanged > 0 && <span>{unchanged} unchanged</span>}
+          {hasErrors && (
+            <span className="sync-banner-errors">
+              {" "}· {result.errors.length} error{result.errors.length !== 1 ? "s" : ""}:{" "}
+              {result.errors.map(e => e.slug).join(", ")}
+            </span>
+          )}
+        </span>
+      </div>
+      <button className="sync-banner-dismiss" onClick={onDismiss} aria-label="Dismiss">×</button>
+    </div>
+  );
+}
+
 export default function Library() {
   const [templates, setTemplates] = useState<AppTemplate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [installing, setInstalling] = useState<AppTemplate | null>(null);
   const [composeBase, setComposeBase] = useState<string | null>(null);
 
   useEffect(() => {
-    api.templates.list().then(setTemplates).finally(() => setLoading(false));
+    loadTemplates();
     api.settings.composeBase().then(r => {
       if (r.host_path) setComposeBase(r.host_path);
     });
   }, []);
+
+  function loadTemplates() {
+    setLoading(true);
+    api.templates.list().then(setTemplates).finally(() => setLoading(false));
+  }
+
+  async function handleSync() {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const result = await api.templates.sync();
+      setSyncResult(result);
+      loadTemplates();
+    } catch (err) {
+      setSyncResult({
+        ok: false,
+        error: err instanceof Error ? err.message : "Sync failed",
+        results: [],
+        errors: [],
+      });
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   if (loading) return <div className="loading-center"><div className="spinner" /></div>;
 
@@ -169,15 +226,30 @@ export default function Library() {
       <div className="page-header">
         <div>
           <div className="page-title">App Library</div>
-          <div className="page-subtitle">{templates.length} available templates</div>
+          <div className="page-subtitle">{templates.length} available template{templates.length !== 1 ? "s" : ""}</div>
         </div>
+        <button
+          className="btn btn-ghost"
+          onClick={handleSync}
+          disabled={syncing}
+        >
+          <RefreshCw size={14} className={syncing ? "spin" : ""} />
+          {syncing ? "Syncing…" : "Sync Templates"}
+        </button>
       </div>
+
+      {syncResult && (
+        <SyncStatusBanner result={syncResult} onDismiss={() => setSyncResult(null)} />
+      )}
 
       {templates.length === 0 ? (
         <div className="empty-state">
           <Package size={48} className="empty-state-icon" />
           <div className="empty-state-title">No templates available</div>
-          <div className="empty-state-desc">Templates are seeded on startup. Check your server logs.</div>
+          <div className="empty-state-desc">
+            Use the Sync button to fetch templates from the configured repository,
+            or check your repository URL in Settings.
+          </div>
         </div>
       ) : (
         <div className="grid-3">
@@ -191,7 +263,12 @@ export default function Library() {
                 )}
                 <div>
                   <div className="app-card-name">{tmpl.name}</div>
-                  <div className="app-card-slug">{tmpl.slug}</div>
+                  <div className="app-card-slug">
+                    {tmpl.slug}
+                    {tmpl.latest_version && (
+                      <span className="template-version-badge">v{tmpl.latest_version}</span>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="app-card-desc">{tmpl.description}</div>

@@ -1,0 +1,60 @@
+schema_version: 1
+slug: sonarr
+name: Sonarr
+version: 1.0.0
+description: TV series collection manager. Pairs with Prowlarr for indexer management.
+icon_url: https://raw.githubusercontent.com/Sonarr/Sonarr/develop/Logo/256.png
+
+provides: []
+
+consumes:
+  - indexer
+
+config_schema:
+  - key: host_port
+    label: Host Port
+    type: number
+    default: 8989
+    required: true
+
+  - key: config
+    label: Config
+    type: volume_mount
+    default: ./config
+    container_path: /config
+    required: true
+
+  - key: tv
+    label: TV
+    type: volume_mount
+    default: ./tv
+    container_path: /tv
+    required: true
+
+  - key: downloads
+    label: Downloads
+    type: volume_mount
+    default: ./downloads
+    container_path: /downloads
+    required: true
+
+hooks:
+  post_install: hooks/post_install.yaml
+  pre_remove: hooks/pre_remove.yaml
+
+compose: |
+  services:
+    sonarr:
+      image: lscr.io/linuxserver/sonarr:latest
+      container_name: sonarr
+      environment:
+        - PUID={{ puid }}
+        - PGID={{ pgid }}
+        - TZ={{ timezone }}
+      volumes:
+        - {{ config_host }}:{{ config_container }}
+        - {{ tv_host }}:{{ tv_container }}
+        - {{ downloads_host }}:{{ downloads_container }}
+      ports:
+        - {{ host_port }}:8989
+      restart: unless-stopped

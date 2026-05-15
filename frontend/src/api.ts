@@ -28,22 +28,42 @@ export interface AppTemplate {
   name: string;
   description: string;
   icon_url: string;
+  source_url: string;
+  latest_version: string;
+  version_count: number;
   compose_template: string;
   config_schema: ConfigField[];
   hook_definitions: Record<string, string>;
   provides: string[];
 }
 
+export interface TemplateVersion {
+  id: string;
+  template_id: string;
+  version: string;
+  schema_version: number;
+  content_hash: string;
+  compose: string;
+  config_schema: ConfigField[];
+  hook_definitions: Record<string, string>;
+  provides: string[];
+  consumes: string[];
+  created_at: string;
+}
+
 export interface InstalledApp {
   id: string;
   template_id: string;
+  template_version_id: string | null;
   slug: string;
   name: string;
   config: Record<string, unknown>;
   state: "installing" | "running" | "stopped" | "error" | "removing";
   compose_path: string;
   created_at: string;
-  app_templates?: AppTemplate;
+  app_templates?: AppTemplate & {
+    installed_version: string | null;
+  };
 }
 
 export interface Job {
@@ -82,6 +102,7 @@ export interface GlobalSettings {
   timezone: string;
   puid: string;
   pgid: string;
+  template_repo_url: string;
 }
 
 export interface ComposeBase {
@@ -89,18 +110,33 @@ export interface ComposeBase {
   error: string | null;
 }
 
+export interface SyncResult {
+  ok: boolean;
+  error?: string;
+  results: { slug: string; version: string; status: "added" | "unchanged" }[];
+  errors: { slug: string; error: string }[];
+  synced_at?: string;
+  repo_url?: string;
+}
+
 export const api = {
   templates: {
     list: () => req<AppTemplate[]>("/api/templates"),
     get: (slug: string) => req<AppTemplate>(`/api/templates/${slug}`),
+    versions: (slug: string) => req<TemplateVersion[]>(`/api/templates/${slug}/versions`),
+    sync: (repo_url?: string) =>
+      req<SyncResult>("/api/templates/sync", {
+        method: "POST",
+        body: JSON.stringify({ repo_url: repo_url ?? null }),
+      }),
   },
   apps: {
     list: () => req<InstalledApp[]>("/api/apps"),
     get: (id: string) => req<InstalledApp>(`/api/apps/${id}`),
-    install: (template_slug: string, name: string, config: Record<string, unknown>) =>
+    install: (template_slug: string, name: string, config: Record<string, unknown>, version?: string) =>
       req<{ app: InstalledApp; job: Job }>("/api/apps", {
         method: "POST",
-        body: JSON.stringify({ template_slug, name, config }),
+        body: JSON.stringify({ template_slug, name, config, version: version ?? null }),
       }),
     updateConfig: (id: string, config: Record<string, unknown>) =>
       req<{ job: Job }>(`/api/apps/${id}/config`, {
@@ -131,7 +167,6 @@ export const api = {
 export function resolveHostPath(hostPath: string, appSlug: string, composeBase: string): string {
   if (!hostPath) return "";
   if (hostPath.startsWith("/")) return hostPath;
-  // strip leading ./
   const stripped = hostPath.replace(/^\.\//, "");
   return `${composeBase.replace(/\/$/, "")}/${appSlug}/${stripped}`;
 }
