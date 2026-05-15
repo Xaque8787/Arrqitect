@@ -1,10 +1,11 @@
 import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
-import { LayoutDashboard, Package, Server } from "lucide-react";
+import { LayoutDashboard, Package, Server, Settings } from "lucide-react";
 import Dashboard from "./views/Dashboard";
 import Library from "./views/Library";
 import InstalledApps from "./views/InstalledApps";
 import AppDetail from "./views/AppDetail";
 import JobLog from "./views/JobLog";
+import SettingsPage from "./views/Settings";
 import "./App.css";
 
 function Nav() {
@@ -30,6 +31,10 @@ function Nav() {
         ))}
       </ul>
       <div className="sidebar-footer">
+        <NavLink to="/settings" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+          <Settings size={16} />
+          <span>Settings</span>
+        </NavLink>
         <span className="version-badge">v1</span>
       </div>
     </nav>
@@ -55,6 +60,7 @@ export default function App() {
           <Route path="/apps" element={<InstalledApps />} />
           <Route path="/apps/:id" element={<AppDetail />} />
           <Route path="/jobs/:id" element={<JobLog />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </Layout>
     </BrowserRouter>

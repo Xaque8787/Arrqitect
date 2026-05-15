@@ -1,11 +1,60 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Package } from "lucide-react";
-import { api } from "../api";
+import { api, resolveHostPath } from "../api";
 import type { AppTemplate, ConfigField } from "../api";
 
-function InstallModal({ template, onClose, onInstalled }: {
+function VolumeMountField({
+  field,
+  value,
+  onChange,
+  appSlug,
+  composeBase,
+}: {
+  field: ConfigField;
+  value: string;
+  onChange: (v: string) => void;
+  appSlug: string;
+  composeBase: string | null;
+}) {
+  const isRelative = value && !value.startsWith("/");
+  const resolved = isRelative && composeBase
+    ? resolveHostPath(value, appSlug, composeBase)
+    : null;
+
+  return (
+    <div className="volume-mount-field">
+      <div className="volume-mount-label">{field.label}</div>
+      <div className="volume-mount-row">
+        <div className="volume-mount-host">
+          <div className="volume-side-tag volume-side-host">Host</div>
+          <input
+            className="form-input"
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            required={field.required}
+            placeholder={String(field.default)}
+          />
+          {resolved && (
+            <div className="volume-resolved">
+              <span className="volume-resolved-arrow">↳</span>
+              <code>{resolved}</code>
+            </div>
+          )}
+        </div>
+        <div className="volume-mount-arrow">→</div>
+        <div className="volume-mount-container">
+          <div className="volume-side-tag volume-side-container">Container</div>
+          <div className="volume-container-path">{field.container_path}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InstallModal({ template, composeBase, onClose, onInstalled }: {
   template: AppTemplate;
+  composeBase: string | null;
   onClose: () => void;
   onInstalled: () => void;
 }) {
@@ -24,7 +73,9 @@ function InstallModal({ template, onClose, onInstalled }: {
     try {
       const resolvedConfig: Record<string, unknown> = {};
       for (const field of template.config_schema) {
-        resolvedConfig[field.key] = field.type === "number" ? Number(config[field.key]) : config[field.key];
+        resolvedConfig[field.key] = field.type === "number"
+          ? Number(config[field.key])
+          : config[field.key];
       }
       const { job } = await api.apps.install(template.slug, name, resolvedConfig);
       onInstalled();
@@ -38,26 +89,54 @@ function InstallModal({ template, onClose, onInstalled }: {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
         <div className="modal-title">Install {template.name}</div>
+
+        <div className="modal-global-note">
+          <span>PUID, PGID, and Timezone are set globally in</span>
+          <a href="/settings" className="inline-link" onClick={e => e.stopPropagation()}>Settings</a>
+        </div>
+
         <form onSubmit={handleSubmit}>
           <div className="form-group">
             <label className="form-label">Instance Name</label>
-            <input className="form-input" value={name} onChange={e => setName(e.target.value)} required />
+            <input
+              className="form-input"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              required
+            />
           </div>
-          {template.config_schema.map((field: ConfigField) => (
-            <div key={field.key} className="form-group">
-              <label className="form-label">{field.label}</label>
-              <input
-                className="form-input"
-                type={field.type === "number" ? "number" : "text"}
-                value={config[field.key] ?? ""}
-                onChange={e => setConfig(c => ({ ...c, [field.key]: e.target.value }))}
-                required={field.required}
-              />
-            </div>
-          ))}
-          {error && <div style={{ color: "var(--color-error)", fontSize: 13, marginBottom: 12 }}>{error}</div>}
+
+          {template.config_schema.map((field: ConfigField) => {
+            if (field.type === "volume_mount") {
+              return (
+                <VolumeMountField
+                  key={field.key}
+                  field={field}
+                  value={config[field.key] ?? ""}
+                  onChange={v => setConfig(c => ({ ...c, [field.key]: v }))}
+                  appSlug={template.slug}
+                  composeBase={composeBase}
+                />
+              );
+            }
+            return (
+              <div key={field.key} className="form-group">
+                <label className="form-label">{field.label}</label>
+                <input
+                  className="form-input"
+                  type={field.type === "number" ? "number" : "text"}
+                  value={config[field.key] ?? ""}
+                  onChange={e => setConfig(c => ({ ...c, [field.key]: e.target.value }))}
+                  required={field.required}
+                />
+              </div>
+            );
+          })}
+
+          {error && <div className="form-error">{error}</div>}
+
           <div className="modal-actions">
             <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={loading}>
@@ -74,9 +153,13 @@ export default function Library() {
   const [templates, setTemplates] = useState<AppTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [installing, setInstalling] = useState<AppTemplate | null>(null);
+  const [composeBase, setComposeBase] = useState<string | null>(null);
 
   useEffect(() => {
     api.templates.list().then(setTemplates).finally(() => setLoading(false));
+    api.settings.composeBase().then(r => {
+      if (r.host_path) setComposeBase(r.host_path);
+    });
   }, []);
 
   if (loading) return <div className="loading-center"><div className="spinner" /></div>;
@@ -130,6 +213,7 @@ export default function Library() {
       {installing && (
         <InstallModal
           template={installing}
+          composeBase={composeBase}
           onClose={() => setInstalling(null)}
           onInstalled={() => setInstalling(null)}
         />

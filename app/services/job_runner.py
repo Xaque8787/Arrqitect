@@ -102,6 +102,7 @@ async def _load_app(app_id: str) -> dict | None:
     if isinstance(d.get("config"), str):
         d["config"] = _json.loads(d["config"])
     d["hook_definitions"] = _json.loads(d["hook_definitions"]) if isinstance(d.get("hook_definitions"), str) else {}
+    d["config_schema"] = _json.loads(d["config_schema"]) if isinstance(d.get("config_schema"), str) else []
     return d
 
 
@@ -143,7 +144,7 @@ async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> No
     config = app.get("config", {})
 
     await _add_step(job_id, "render_compose", "running", "Rendering docker-compose.yml from template")
-    rendered = render_compose(app["compose_template"], config, slug)
+    rendered = render_compose(app["compose_template"], config, app.get("config_schema", []), slug)
     await _add_step(job_id, "render_compose", "success", "Compose file rendered", finished_at=_now())
 
     if not dry_run:
@@ -179,7 +180,7 @@ async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
     await _run_hooks(job_id, hooks, "pre_update", dry_run)
 
     await _add_step(job_id, "render_compose", "running", "Re-rendering docker-compose.yml")
-    rendered = render_compose(app["compose_template"], config, slug)
+    rendered = render_compose(app["compose_template"], config, app.get("config_schema", []), slug)
     await _add_step(job_id, "render_compose", "success", "Compose file rendered", finished_at=_now())
 
     if not dry_run:

@@ -9,7 +9,7 @@ load_dotenv()
 
 from app.db.init import init_db
 from app.db.runner import run_migrations
-from app.api import templates, apps, jobs, ws
+from app.api import templates, apps, jobs, ws, settings
 from app.services.seeder import seed_templates
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "frontend", "dist")
@@ -29,6 +29,7 @@ app.include_router(templates.router)
 app.include_router(apps.router)
 app.include_router(jobs.router)
 app.include_router(ws.router)
+app.include_router(settings.router)
 
 if os.path.isdir(STATIC_DIR):
     app.mount("/assets", StaticFiles(directory=os.path.join(STATIC_DIR, "assets")), name="assets")

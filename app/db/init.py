@@ -77,6 +77,12 @@ CREATE INDEX IF NOT EXISTS idx_runtime_deps_provider   ON runtime_dependencies(p
 CREATE INDEX IF NOT EXISTS idx_jobs_app                ON jobs(installed_app_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status             ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_job_steps_job           ON job_steps(job_id);
+
+CREATE TABLE IF NOT EXISTS global_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
 """
 
 

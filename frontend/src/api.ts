@@ -12,6 +12,16 @@ async function req<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export interface ConfigField {
+  key: string;
+  label: string;
+  type: "string" | "number" | "volume_mount";
+  default: string | number;
+  required: boolean;
+  // volume_mount only
+  container_path?: string;
+}
+
 export interface AppTemplate {
   id: string;
   slug: string;
@@ -22,14 +32,6 @@ export interface AppTemplate {
   config_schema: ConfigField[];
   hook_definitions: Record<string, string>;
   provides: string[];
-}
-
-export interface ConfigField {
-  key: string;
-  label: string;
-  type: "string" | "number";
-  default: string | number;
-  required: boolean;
 }
 
 export interface InstalledApp {
@@ -73,6 +75,18 @@ export interface PreviewResult {
   compose_error: string | null;
   hook_steps: { hook: string; action: string }[];
   host_compose_path: string;
+  compose_base: string;
+}
+
+export interface GlobalSettings {
+  timezone: string;
+  puid: string;
+  pgid: string;
+}
+
+export interface ComposeBase {
+  host_path: string | null;
+  error: string | null;
 }
 
 export const api = {
@@ -102,4 +116,22 @@ export const api = {
       req<Job[]>(`/api/jobs${app_id ? `?app_id=${app_id}` : ""}`),
     get: (id: string) => req<Job>(`/api/jobs/${id}`),
   },
+  settings: {
+    get: () => req<GlobalSettings>("/api/settings"),
+    update: (settings: Partial<GlobalSettings>) =>
+      req<GlobalSettings>("/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({ settings }),
+      }),
+    composeBase: () => req<ComposeBase>("/api/settings/compose-base"),
+  },
 };
+
+/** Resolve a host path against a compose base + app slug, client-side. */
+export function resolveHostPath(hostPath: string, appSlug: string, composeBase: string): string {
+  if (!hostPath) return "";
+  if (hostPath.startsWith("/")) return hostPath;
+  // strip leading ./
+  const stripped = hostPath.replace(/^\.\//, "");
+  return `${composeBase.replace(/\/$/, "")}/${appSlug}/${stripped}`;
+}
