@@ -2,12 +2,17 @@
 Enumerate-Configure-Build (ECB) service.
 
 At render time:
-  - Global settings (puid, pgid, timezone) are fetched from the DB and injected.
-  - volume_mount fields store only host_path in the app config (key -> host_path).
-    The template uses {{ key_host }} and {{ key_container }} variables.
-    key_host comes from config; key_container comes from the schema's container_path.
-  - Relative host paths (starting with ./) are resolved against the compose_base,
-    which is derived from docker inspect on the arrqitect container.
+  - Global settings (puid, pgid, timezone) are fetched from the DB and always
+    written to .env as PUID, PGID, TZ.
+  - Each config_schema field may declare an optional `env_key`. If present:
+      - The field value is written to .env as ENV_KEY=<resolved_value>.
+      - The compose template uses ${ENV_KEY:-default} Docker-native interpolation.
+      - For volume_mount fields: the resolved host path is written to .env.
+    If absent:
+      - The value is rendered directly into the compose file via Jinja2.
+      - For volume_mount fields without env_key: {key}_host and {key}_container
+        are injected into the Jinja2 context.
+  - Relative host paths (e.g. ./config) resolve to compose_base/app_slug/subpath.
 """
 
 import json
@@ -20,12 +25,15 @@ from app.db.client import get_sync_conn
 
 CONTAINER_COMPOSE_DIR = "/compose"
 
+# Global settings always map to these fixed env var names.
+GLOBAL_ENV_MAP = {
+    "puid": "PUID",
+    "pgid": "PGID",
+    "timezone": "TZ",
+}
+
 
 def _get_compose_base() -> str:
-    """
-    Return the host-side path mapped to /compose in the arrqitect container.
-    Falls back to the env var HOST_COMPOSE_DIR, then to /compose as a last resort.
-    """
     env_override = os.environ.get("HOST_COMPOSE_DIR", "")
     if env_override:
         return env_override
@@ -65,9 +73,9 @@ def _get_global_settings() -> dict:
 
 def resolve_host_path(host_path: str, app_slug: str, compose_base: str) -> str:
     """
-    Resolve a host path value from the user.
-    - Absolute paths pass through unchanged.
-    - Relative paths (./foo) resolve to compose_base / app_slug / foo.
+    Resolve a host path value.
+    Absolute paths pass through unchanged.
+    Relative paths resolve to compose_base/app_slug/subpath.
     """
     p = Path(host_path)
     if p.is_absolute():
@@ -78,22 +86,52 @@ def resolve_host_path(host_path: str, app_slug: str, compose_base: str) -> str:
     return str(Path(compose_base) / app_slug / p)
 
 
-def _build_render_context(config: dict, schema: list, app_slug: str, compose_base: str) -> dict:
+def _build_env_vars(config: dict, schema: list, app_slug: str, compose_base: str,
+                    global_settings: dict) -> dict[str, str]:
     """
-    Build the Jinja2 render context from the stored config + schema metadata.
-    For volume_mount fields: injects {key}_host (resolved) and {key}_container.
-    All other fields are passed through as-is.
+    Build the dict of ENV_KEY -> value for the .env file.
+    Includes global settings and any schema field that declares env_key.
     """
-    ctx = {}
-    schema_map = {f["key"]: f for f in schema}
+    env_vars: dict[str, str] = {}
+
+    for internal_key, env_key in GLOBAL_ENV_MAP.items():
+        env_vars[env_key] = str(global_settings[internal_key])
 
     for field in schema:
+        env_key = field.get("env_key")
+        if not env_key:
+            continue
+
         key = field["key"]
         ftype = field.get("type")
 
         if ftype == "volume_mount":
-            raw_host = config.get(key, str(field.get("default", "")))
-            ctx[f"{key}_host"] = resolve_host_path(raw_host, app_slug, compose_base)
+            raw = config.get(key, str(field.get("default", "")))
+            env_vars[env_key] = resolve_host_path(raw, app_slug, compose_base)
+        else:
+            env_vars[env_key] = str(config.get(key, field.get("default", "")))
+
+    return env_vars
+
+
+def _build_jinja2_context(config: dict, schema: list, app_slug: str,
+                          compose_base: str) -> dict:
+    """
+    Build the Jinja2 render context for fields that do NOT have env_key.
+    volume_mount fields without env_key inject {key}_host and {key}_container.
+    Other fields without env_key inject the value directly.
+    """
+    ctx: dict = {}
+    for field in schema:
+        if field.get("env_key"):
+            continue
+
+        key = field["key"]
+        ftype = field.get("type")
+
+        if ftype == "volume_mount":
+            raw = config.get(key, str(field.get("default", "")))
+            ctx[f"{key}_host"] = resolve_host_path(raw, app_slug, compose_base)
             ctx[f"{key}_container"] = field.get("container_path", f"/{key}")
         else:
             ctx[key] = config.get(key, field.get("default", ""))
@@ -101,21 +139,76 @@ def _build_render_context(config: dict, schema: list, app_slug: str, compose_bas
     return ctx
 
 
+def needs_compose_rewrite(changed_keys: set[str], schema: list) -> bool:
+    """
+    Return True if any changed field lacks an env_key (requires compose file rewrite).
+    """
+    schema_map = {f["key"]: f for f in schema}
+    for key in changed_keys:
+        field = schema_map.get(key)
+        if field and not field.get("env_key"):
+            return True
+    return False
+
+
 def render_compose(template_str: str, config: dict, schema: list, app_slug: str) -> str:
+    """
+    Render the compose template via Jinja2.
+    Only fields without env_key are substituted; ${VAR} tokens pass through literally.
+    """
     compose_base = _get_compose_base()
-    global_settings = _get_global_settings()
+    ctx = _build_jinja2_context(config, schema, app_slug, compose_base)
 
-    ctx = _build_render_context(config, schema, app_slug, compose_base)
-    ctx.update(global_settings)
-
-    env = Environment(
+    jinja_env = Environment(
         loader=BaseLoader(),
         undefined=StrictUndefined,
         keep_trailing_newline=True,
     )
-    return env.from_string(template_str).render(**ctx)
+    return jinja_env.from_string(template_str).render(**ctx)
 
 
+def build_env_file_content(config: dict, schema: list, app_slug: str,
+                           global_settings: dict | None = None) -> str:
+    """Build the string content for the .env file."""
+    compose_base = _get_compose_base()
+    if global_settings is None:
+        global_settings = _get_global_settings()
+
+    env_vars = _build_env_vars(config, schema, app_slug, compose_base, global_settings)
+
+    lines = []
+    for k, v in env_vars.items():
+        if any(c in v for c in (" ", "#", "\n")):
+            v = f'"{v}"'
+        lines.append(f"{k}={v}")
+    return "\n".join(lines) + "\n"
+
+
+def write_compose_files(app_slug: str, compose_content: str, env_content: str) -> tuple[str, str]:
+    """
+    Write docker-compose.yml and .env to the app's project directory.
+    Returns (compose_path, env_path).
+    """
+    app_dir = Path(CONTAINER_COMPOSE_DIR) / app_slug
+    app_dir.mkdir(parents=True, exist_ok=True)
+
+    compose_path = app_dir / "docker-compose.yml"
+    compose_path.write_text(compose_content)
+
+    env_path = app_dir / ".env"
+    env_path.write_text(env_content)
+
+    return str(compose_path), str(env_path)
+
+
+def write_env_only(app_slug: str, env_content: str) -> str:
+    """Overwrite only the .env file. Returns the env file path."""
+    env_path = Path(CONTAINER_COMPOSE_DIR) / app_slug / ".env"
+    env_path.write_text(env_content)
+    return str(env_path)
+
+
+# Legacy shim retained for any callers that haven't been updated yet.
 def write_compose_file(app_slug: str, content: str) -> str:
     app_dir = Path(CONTAINER_COMPOSE_DIR) / app_slug
     app_dir.mkdir(parents=True, exist_ok=True)
@@ -131,13 +224,16 @@ async def preview_app(app_row: dict) -> dict:
     slug = app_row["slug"]
 
     compose_base = _get_compose_base()
+    global_settings = _get_global_settings()
 
     try:
         rendered = render_compose(template["compose_template"], config, schema, slug)
+        env_content = build_env_file_content(config, schema, slug, global_settings)
         compose_ok = True
         compose_error = None
     except Exception as exc:
         rendered = ""
+        env_content = ""
         compose_ok = False
         compose_error = str(exc)
 
@@ -152,9 +248,11 @@ async def preview_app(app_row: dict) -> dict:
         "slug": slug,
         "config": config,
         "compose_rendered": rendered,
+        "env_rendered": env_content,
         "compose_ok": compose_ok,
         "compose_error": compose_error,
         "hook_steps": hook_steps,
         "host_compose_path": str(Path(compose_base) / slug / "docker-compose.yml"),
+        "host_env_path": str(Path(compose_base) / slug / ".env"),
         "compose_base": compose_base,
     }

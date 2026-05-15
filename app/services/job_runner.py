@@ -6,13 +6,19 @@ WebSocket broadcast handled via a simple in-memory subscriber map.
 import asyncio
 import json
 import secrets
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Awaitable
 
 from app.db.client import get_db
-from app.services.ecb import render_compose, write_compose_file
+from app.services.ecb import (
+    render_compose,
+    build_env_file_content,
+    write_compose_files,
+    write_env_only,
+)
 
 _subscribers: dict[str, list[Callable[[str], Awaitable[None]]]] = {}
 
@@ -123,7 +129,7 @@ async def _run_job(job_id: str, app_id: str, job_type: str, dry_run: bool) -> No
         elif job_type == "update":
             await _run_update(job_id, app_id, app, dry_run)
         elif job_type == "remove":
-            await _run_remove(job_id, app_id, app.get("compose_path", ""), dry_run)
+            await _run_remove(job_id, app_id, app, dry_run)
         else:
             await _add_step(job_id, job_type, "skipped",
                             f"Job type '{job_type}' not implemented in v1", finished_at=_now())
@@ -147,21 +153,24 @@ async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> No
     hooks = app.get("hook_definitions", {})
     slug = app["slug"]
     config = app.get("config", {})
+    schema = app.get("config_schema", [])
 
     await _add_step(job_id, "render_compose", "running", "Rendering docker-compose.yml from template")
-    rendered = render_compose(app["compose_template"], config, app.get("config_schema", []), slug)
+    rendered = render_compose(app["compose_template"], config, schema, slug)
+    env_content = build_env_file_content(config, schema, slug)
     await _add_step(job_id, "render_compose", "success", "Compose file rendered", finished_at=_now())
 
     if not dry_run:
-        await _add_step(job_id, "write_compose", "running", "Writing compose file to disk")
-        compose_path = write_compose_file(slug, rendered)
+        await _add_step(job_id, "write_compose", "running", "Writing docker-compose.yml and .env to disk")
+        compose_path, env_path = write_compose_files(slug, rendered, env_content)
         async with get_db() as db:
             await db.execute(
                 "UPDATE installed_apps SET compose_path = ? WHERE id = ?",
                 (compose_path, app_id),
             )
             await db.commit()
-        await _add_step(job_id, "write_compose", "success", f"Written: {compose_path}", finished_at=_now())
+        await _add_step(job_id, "write_compose", "success",
+                        f"Written: {compose_path}\nWritten: {env_path}", finished_at=_now())
 
     await _run_hooks(job_id, hooks, "pre_install", dry_run)
 
@@ -181,21 +190,36 @@ async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
     hooks = app.get("hook_definitions", {})
     slug = app["slug"]
     config = app.get("config", {})
+    schema = app.get("config_schema", [])
+    compose_path = app.get("compose_path", "")
 
     await _run_hooks(job_id, hooks, "pre_update", dry_run)
 
-    await _add_step(job_id, "render_compose", "running", "Re-rendering docker-compose.yml")
-    rendered = render_compose(app["compose_template"], config, app.get("config_schema", []), slug)
-    await _add_step(job_id, "render_compose", "success", "Compose file rendered", finished_at=_now())
+    env_content = build_env_file_content(config, schema, slug)
+    non_env_fields = {f["key"] for f in schema if not f.get("env_key")}
+    require_rewrite = bool(non_env_fields) or not compose_path or not Path(compose_path).exists()
 
     if not dry_run:
-        compose_path = write_compose_file(slug, rendered)
-        async with get_db() as db:
-            await db.execute(
-                "UPDATE installed_apps SET compose_path = ? WHERE id = ?",
-                (compose_path, app_id),
-            )
-            await db.commit()
+        if require_rewrite:
+            await _add_step(job_id, "render_compose", "running", "Re-rendering docker-compose.yml")
+            rendered = render_compose(app["compose_template"], config, schema, slug)
+            await _add_step(job_id, "render_compose", "success", "Compose file rendered", finished_at=_now())
+
+            await _add_step(job_id, "write_compose", "running", "Writing docker-compose.yml and .env")
+            compose_path, env_path = write_compose_files(slug, rendered, env_content)
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE installed_apps SET compose_path = ? WHERE id = ?",
+                    (compose_path, app_id),
+                )
+                await db.commit()
+            await _add_step(job_id, "write_compose", "success",
+                            f"Written: {compose_path}\nWritten: {env_path}", finished_at=_now())
+        else:
+            await _add_step(job_id, "write_env", "running",
+                            "Updating .env (all fields are env-interpolated)")
+            env_path = write_env_only(slug, env_content)
+            await _add_step(job_id, "write_env", "success", f"Written: {env_path}", finished_at=_now())
 
         await _add_step(job_id, "docker_pull", "running", "Pulling latest images")
         result = await _docker_compose(compose_path, ["pull"])
@@ -213,12 +237,42 @@ async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
     await _set_app_state(app_id, "running" if not dry_run else "stopped")
 
 
-async def _run_remove(job_id: str, app_id: str, compose_path: str, dry_run: bool) -> None:
+async def _run_remove(job_id: str, app_id: str, app: dict, dry_run: bool) -> None:
+    compose_path = app.get("compose_path", "")
+    slug = app.get("slug", "")
+
     if not dry_run and compose_path and Path(compose_path).exists():
+        # Collect image IDs before stopping so we can remove them precisely.
+        await _add_step(job_id, "collect_images", "running", "Collecting image IDs for this app")
+        img_result = await _docker_compose(compose_path, ["images", "-q"])
+        image_ids = [line.strip() for line in img_result.stdout.splitlines() if line.strip()]
+        await _add_step(job_id, "collect_images", "success",
+                        f"Found {len(image_ids)} image(s): {', '.join(image_ids) or 'none'}",
+                        finished_at=_now())
+
         await _add_step(job_id, "docker_down", "running", "Running docker compose down")
         result = await _docker_compose(compose_path, ["down"])
         status = "success" if result.returncode == 0 else "failed"
         await _add_step(job_id, "docker_down", status, result.stdout + result.stderr, finished_at=_now())
+
+        if image_ids:
+            await _add_step(job_id, "remove_images", "running",
+                            f"Removing {len(image_ids)} image(s)")
+            rmi_result = await _docker_rmi(image_ids)
+            rmi_status = "success" if rmi_result.returncode == 0 else "failed"
+            await _add_step(job_id, "remove_images", rmi_status,
+                            rmi_result.stdout + rmi_result.stderr, finished_at=_now())
+
+        app_dir = Path(compose_path).parent
+        if slug and app_dir.exists() and app_dir.name == slug:
+            await _add_step(job_id, "remove_files", "running",
+                            f"Removing project directory: {app_dir}")
+            try:
+                shutil.rmtree(app_dir)
+                await _add_step(job_id, "remove_files", "success",
+                                f"Removed: {app_dir}", finished_at=_now())
+            except Exception as exc:
+                await _add_step(job_id, "remove_files", "failed", str(exc), finished_at=_now())
 
     await _add_step(job_id, "cleanup_db", "running", "Removing app record from database")
     async with get_db() as db:
@@ -233,4 +287,13 @@ async def _docker_compose(compose_path: str, args: list[str]) -> subprocess.Comp
     return await loop.run_in_executor(
         None,
         lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=120),
+    )
+
+
+async def _docker_rmi(image_ids: list[str]) -> subprocess.CompletedProcess:
+    cmd = ["docker", "image", "rm"] + image_ids
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None,
+        lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=60),
     )

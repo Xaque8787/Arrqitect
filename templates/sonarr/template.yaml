@@ -15,6 +15,7 @@ config_schema:
     label: Host Port
     type: number
     default: 8989
+    env_key: HOST_PORT
     required: true
 
   - key: config
@@ -22,6 +23,7 @@ config_schema:
     type: volume_mount
     default: ./config
     container_path: /config
+    env_key: CONFIG_PATH
     required: true
 
   - key: tv
@@ -29,6 +31,7 @@ config_schema:
     type: volume_mount
     default: ./tv
     container_path: /tv
+    env_key: TV_PATH
     required: true
 
   - key: downloads
@@ -36,6 +39,7 @@ config_schema:
     type: volume_mount
     default: ./downloads
     container_path: /downloads
+    env_key: DOWNLOADS_PATH
     required: true
 
 hooks:
@@ -48,13 +52,13 @@ compose: |
       image: lscr.io/linuxserver/sonarr:latest
       container_name: sonarr
       environment:
-        - PUID={{ puid }}
-        - PGID={{ pgid }}
-        - TZ={{ timezone }}
+        - PUID=${PUID:-1000}
+        - PGID=${PGID:-1000}
+        - TZ=${TZ:-UTC}
       volumes:
-        - {{ config_host }}:{{ config_container }}
-        - {{ tv_host }}:{{ tv_container }}
-        - {{ downloads_host }}:{{ downloads_container }}
+        - ${CONFIG_PATH:-./config}:/config
+        - ${TV_PATH:-./tv}:/tv
+        - ${DOWNLOADS_PATH:-./downloads}:/downloads
       ports:
-        - {{ host_port }}:8989
+        - ${HOST_PORT:-8989}:8989
       restart: unless-stopped

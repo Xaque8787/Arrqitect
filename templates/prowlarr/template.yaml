@@ -15,6 +15,7 @@ config_schema:
     label: Host Port
     type: number
     default: 9696
+    env_key: HOST_PORT
     required: true
 
   - key: config
@@ -22,6 +23,7 @@ config_schema:
     type: volume_mount
     default: ./config
     container_path: /config
+    env_key: CONFIG_PATH
     required: true
 
 hooks:
@@ -34,11 +36,11 @@ compose: |
       image: lscr.io/linuxserver/prowlarr:latest
       container_name: prowlarr
       environment:
-        - PUID={{ puid }}
-        - PGID={{ pgid }}
-        - TZ={{ timezone }}
+        - PUID=${PUID:-1000}
+        - PGID=${PGID:-1000}
+        - TZ=${TZ:-UTC}
       volumes:
-        - {{ config_host }}:{{ config_container }}
+        - ${CONFIG_PATH:-./config}:/config
       ports:
-        - {{ host_port }}:9696
+        - ${HOST_PORT:-9696}:9696
       restart: unless-stopped

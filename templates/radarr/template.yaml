@@ -15,6 +15,7 @@ config_schema:
     label: Host Port
     type: number
     default: 7878
+    env_key: HOST_PORT
     required: true
 
   - key: config
@@ -22,6 +23,7 @@ config_schema:
     type: volume_mount
     default: ./config
     container_path: /config
+    env_key: CONFIG_PATH
     required: true
 
   - key: movies
@@ -29,6 +31,7 @@ config_schema:
     type: volume_mount
     default: ./movies
     container_path: /movies
+    env_key: MOVIES_PATH
     required: true
 
   - key: downloads
@@ -36,6 +39,7 @@ config_schema:
     type: volume_mount
     default: ./downloads
     container_path: /downloads
+    env_key: DOWNLOADS_PATH
     required: true
 
 hooks:
@@ -48,13 +52,13 @@ compose: |
       image: lscr.io/linuxserver/radarr:latest
       container_name: radarr
       environment:
-        - PUID={{ puid }}
-        - PGID={{ pgid }}
-        - TZ={{ timezone }}
+        - PUID=${PUID:-1000}
+        - PGID=${PGID:-1000}
+        - TZ=${TZ:-UTC}
       volumes:
-        - {{ config_host }}:{{ config_container }}
-        - {{ movies_host }}:{{ movies_container }}
-        - {{ downloads_host }}:{{ downloads_container }}
+        - ${CONFIG_PATH:-./config}:/config
+        - ${MOVIES_PATH:-./movies}:/movies
+        - ${DOWNLOADS_PATH:-./downloads}:/downloads
       ports:
-        - {{ host_port }}:7878
+        - ${HOST_PORT:-7878}:7878
       restart: unless-stopped
