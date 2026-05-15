@@ -13,9 +13,17 @@ import json
 from pathlib import Path
 
 from app.models.template import TemplateModel, ServiceModel, StorageModel, ConfigField
-from app.models.ir import StorageMountIR, PortIR, EnvVarIR, LifecycleIR
+from app.models.ir import StorageMountIR, MountPropagationIR, PortIR, EnvVarIR, LifecycleIR
 
 CONTAINER_COMPOSE_DIR = "/compose"
+
+# Template layer → IR intent. Docker terms never appear here.
+_PROPAGATION_INTENT = {
+    "private": "none",
+    "shared": "bidirectional",
+    "slave": "host-to-container",
+    "rslave": "container-to-host",
+}
 
 GLOBAL_ENV_MAP = {
     "puid": ("PUID", "global"),
@@ -83,25 +91,34 @@ def resolve_storage(
     mounts: list[StorageMountIR] = []
 
     for storage in service.storage:
-        # Find the config field that binds to this storage mount
         dotpath_prefix = f"services.{service.id}.storage.{storage.id}"
+
+        # host_path: ConfigField binding → compose_base fallback
         host_path = _find_bound_value(
             dotpath_prefix + ".host_path",
             config_schema,
             resolved_config,
         )
         if host_path is None:
-            # Fall back to a sensible default: compose_base/slug/storage_id
             host_path = str(Path(compose_base) / app_slug / storage.id)
         else:
             host_path = resolve_host_path(host_path, app_slug, compose_base)
+
+        # propagation: ConfigField override → template default → safe fallback ("none")
+        prop_override = _find_bound_value(
+            dotpath_prefix + ".propagation",
+            config_schema,
+            resolved_config,
+        )
+        prop_template = prop_override if prop_override else storage.propagation
+        prop_mode = _PROPAGATION_INTENT.get(prop_template, "none")
 
         mounts.append(StorageMountIR(
             id=storage.id,
             host_path=host_path,
             container_path=storage.container_path,
             persistence=storage.persistence,
-            sharing=storage.sharing,
+            propagation=MountPropagationIR(mode=prop_mode),
             mutability=storage.mutability,
             durability=storage.durability,
         ))

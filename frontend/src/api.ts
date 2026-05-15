@@ -22,6 +22,8 @@ export interface ConfigField {
   required: boolean;
   visibility: "visible" | "advanced" | "hidden";
   source: "user" | "platform" | "derived";
+  allowed_values?: string[] | null;
+  ui_widget?: "input" | "select";
 }
 
 export interface CapabilityProvides {

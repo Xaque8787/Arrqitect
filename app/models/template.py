@@ -22,7 +22,7 @@ class LifecycleModel(BaseModel):
 class StorageModel(BaseModel):
     id: str
     persistence: Literal["persistent", "ephemeral"]
-    sharing: Literal["private", "shared"]
+    propagation: Literal["private", "shared", "slave", "rslave"] = "private"
     mutability: Literal["read-write", "read-only"]
     durability: Literal["configuration", "user-data", "transient", "model-store"]
     container_path: str
@@ -51,6 +51,14 @@ class ServiceModel(BaseModel):
     storage: list[StorageModel] = []
     lifecycle: LifecycleModel = LifecycleModel()
 
+    @field_validator("storage")
+    @classmethod
+    def storage_ids_unique(cls, v: list) -> list:
+        ids = [s.id for s in v]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Storage mount ids must be unique within a service")
+        return v
+
 
 class CapabilityProvides(BaseModel):
     key: str
@@ -75,6 +83,8 @@ class ConfigField(BaseModel):
     required: bool = False
     visibility: Literal["visible", "advanced", "hidden"] = "visible"
     source: Literal["user", "platform", "derived"] = "user"
+    allowed_values: list[str] | None = None
+    ui_widget: Literal["input", "select"] = "input"
 
 
 class AppModel(BaseModel):

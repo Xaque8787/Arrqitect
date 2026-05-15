@@ -3,7 +3,7 @@ schema_version: 2
 app:
   id: sonarr
   name: Sonarr
-  version: "1.2.0"
+  version: "1.3.0"
   flavor: linuxserver
 
 description: TV series collection manager. Pairs with Prowlarr for indexer management.
@@ -25,21 +25,21 @@ services:
     storage:
       - id: config
         persistence: persistent
-        sharing: private
+        propagation: private
         mutability: read-write
         durability: configuration
         container_path: /config
 
       - id: tv
         persistence: persistent
-        sharing: shared
+        propagation: shared
         mutability: read-write
         durability: user-data
         container_path: /tv
 
       - id: downloads
         persistence: persistent
-        sharing: shared
+        propagation: shared
         mutability: read-write
         durability: transient
         container_path: /downloads
@@ -91,6 +91,51 @@ config_schema:
     required: true
     visibility: visible
     source: user
+
+  - id: config_propagation
+    label: Config Mount Propagation
+    type: string
+    default: private
+    binds_to: services.sonarr.storage.config.propagation
+    required: false
+    visibility: advanced
+    source: user
+    ui_widget: select
+    allowed_values:
+      - private
+      - shared
+      - slave
+      - rslave
+
+  - id: tv_propagation
+    label: TV Mount Propagation
+    type: string
+    default: shared
+    binds_to: services.sonarr.storage.tv.propagation
+    required: false
+    visibility: advanced
+    source: user
+    ui_widget: select
+    allowed_values:
+      - private
+      - shared
+      - slave
+      - rslave
+
+  - id: downloads_propagation
+    label: Downloads Mount Propagation
+    type: string
+    default: shared
+    binds_to: services.sonarr.storage.downloads.propagation
+    required: false
+    visibility: advanced
+    source: user
+    ui_widget: select
+    allowed_values:
+      - private
+      - shared
+      - slave
+      - rslave
 
   - id: web_ui_port_env
     label: Web UI Port (env)

@@ -22,8 +22,10 @@ Semantic lowering rules:
     none        -> port omitted entirely
 
   storage axes -> bind mount:
-    sharing=private  -> propagation: rprivate
-    sharing=shared   -> propagation: rshared
+    propagation.mode=none               -> propagation: rprivate
+    propagation.mode=bidirectional      -> propagation: rshared
+    propagation.mode=host-to-container  -> propagation: rslave
+    propagation.mode=container-to-host  -> propagation: slave
     persistence=persistent  -> create_host_path: true
     persistence=ephemeral   -> create_host_path: false
     mutability=read-only    -> read_only: true
@@ -53,9 +55,11 @@ _PROTOCOL_MAP = {
     "udp": "udp",
 }
 
-_SHARING_PROPAGATION = {
-    "private": "rprivate",
-    "shared": "rshared",
+_PROPAGATION_MAP = {
+    "none": "rprivate",
+    "bidirectional": "rshared",
+    "host-to-container": "rslave",
+    "container-to-host": "slave",
 }
 
 
@@ -127,7 +131,7 @@ class ComposeRenderer:
             "read_only": mount.mutability == "read-only",
             "bind": {
                 "create_host_path": mount.persistence == "persistent",
-                "propagation": _SHARING_PROPAGATION[mount.sharing],
+                "propagation": _PROPAGATION_MAP[mount.propagation.mode],
             },
         }
 

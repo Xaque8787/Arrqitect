@@ -12,12 +12,16 @@ from typing import Literal
 from pydantic import BaseModel
 
 
+class MountPropagationIR(BaseModel):
+    mode: Literal["none", "bidirectional", "host-to-container", "container-to-host"] = "none"
+
+
 class StorageMountIR(BaseModel):
     id: str
     host_path: str                   # resolved absolute path
     container_path: str
     persistence: Literal["persistent", "ephemeral"]
-    sharing: Literal["private", "shared"]
+    propagation: MountPropagationIR = MountPropagationIR()
     mutability: Literal["read-write", "read-only"]
     durability: str
 
