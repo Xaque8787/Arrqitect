@@ -13,13 +13,12 @@ async function req<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export interface ConfigField {
-  key: string;
+  id: string;
   label: string;
-  type: "string" | "number" | "volume_mount";
-  default: string | number;
+  type: "port" | "storage_path" | "string" | "number" | "boolean";
+  default: string | number | boolean | null;
+  binds_to: string;
   required: boolean;
-  // volume_mount only
-  container_path?: string;
 }
 
 export interface AppTemplate {

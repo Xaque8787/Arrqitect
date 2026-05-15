@@ -76,7 +76,9 @@ function EditConfigModal({ app, schema, onClose, onSaved }: {
     try {
       const resolved: Record<string, unknown> = {};
       for (const field of schema) {
-        resolved[field.key] = field.type === "number" ? Number(config[field.key]) : config[field.key];
+        resolved[field.id] = field.type === "number" || field.type === "port"
+          ? Number(config[field.id])
+          : config[field.id];
       }
       const { job } = await api.apps.updateConfig(app.id, resolved);
       onSaved();
@@ -94,13 +96,13 @@ function EditConfigModal({ app, schema, onClose, onSaved }: {
         <div className="modal-title">Edit Config — {app.name}</div>
         <form onSubmit={handleSubmit}>
           {schema.map(field => (
-            <div key={field.key} className="form-group">
+            <div key={field.id} className="form-group">
               <label className="form-label">{field.label}</label>
               <input
                 className="form-input"
-                type={field.type === "number" ? "number" : "text"}
-                value={config[field.key] ?? ""}
-                onChange={e => setConfig(c => ({ ...c, [field.key]: e.target.value }))}
+                type={field.type === "number" || field.type === "port" ? "number" : "text"}
+                value={config[field.id] ?? ""}
+                onChange={e => setConfig(c => ({ ...c, [field.id]: e.target.value }))}
                 required={field.required}
               />
             </div>

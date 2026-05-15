@@ -74,7 +74,7 @@ def run_migrations() -> None:
             spec.loader.exec_module(module)
             module.upgrade(conn)
             conn.execute(
-                "INSERT INTO migrations (filename) VALUES (?)", (path.name,)
+                "INSERT OR IGNORE INTO migrations (filename) VALUES (?)", (path.name,)
             )
             conn.commit()
             print(f"[migrations] Applied  {path.name}")

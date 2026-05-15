@@ -4,7 +4,7 @@ import { Package, RefreshCw, CircleCheck as CheckCircle, CircleAlert as AlertCir
 import { api, resolveHostPath } from "../api";
 import type { AppTemplate, ConfigField, SyncResult } from "../api";
 
-function VolumeMountField({
+function StoragePathField({
   field,
   value,
   onChange,
@@ -25,28 +25,21 @@ function VolumeMountField({
   return (
     <div className="volume-mount-field">
       <div className="volume-mount-label">{field.label}</div>
-      <div className="volume-mount-row">
-        <div className="volume-mount-host">
-          <div className="volume-side-tag volume-side-host">Host</div>
-          <input
-            className="form-input"
-            value={value}
-            onChange={e => onChange(e.target.value)}
-            required={field.required}
-            placeholder={String(field.default)}
-          />
-          {resolved && (
-            <div className="volume-resolved">
-              <span className="volume-resolved-arrow">↳</span>
-              <code>{resolved}</code>
-            </div>
-          )}
-        </div>
-        <div className="volume-mount-arrow">→</div>
-        <div className="volume-mount-container">
-          <div className="volume-side-tag volume-side-container">Container</div>
-          <div className="volume-container-path">{field.container_path}</div>
-        </div>
+      <div className="volume-mount-host">
+        <div className="volume-side-tag volume-side-host">Host Path</div>
+        <input
+          className="form-input"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          required={field.required}
+          placeholder={String(field.default ?? "")}
+        />
+        {resolved && (
+          <div className="volume-resolved">
+            <span className="volume-resolved-arrow">↳</span>
+            <code>{resolved}</code>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -60,7 +53,7 @@ function InstallModal({ template, composeBase, onClose, onInstalled }: {
 }) {
   const [name, setName] = useState(template.name);
   const [config, setConfig] = useState<Record<string, string>>(() =>
-    Object.fromEntries(template.config_schema.map(f => [f.key, String(f.default ?? "")]))
+    Object.fromEntries(template.config_schema.map(f => [f.id, String(f.default ?? "")]))
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,9 +66,9 @@ function InstallModal({ template, composeBase, onClose, onInstalled }: {
     try {
       const resolvedConfig: Record<string, unknown> = {};
       for (const field of template.config_schema) {
-        resolvedConfig[field.key] = field.type === "number"
-          ? Number(config[field.key])
-          : config[field.key];
+        resolvedConfig[field.id] = field.type === "number" || field.type === "port"
+          ? Number(config[field.id])
+          : config[field.id];
       }
       const { job } = await api.apps.install(template.slug, name, resolvedConfig);
       onInstalled();
@@ -113,26 +106,26 @@ function InstallModal({ template, composeBase, onClose, onInstalled }: {
           </div>
 
           {template.config_schema.map((field: ConfigField) => {
-            if (field.type === "volume_mount") {
+            if (field.type === "storage_path") {
               return (
-                <VolumeMountField
-                  key={field.key}
+                <StoragePathField
+                  key={field.id}
                   field={field}
-                  value={config[field.key] ?? ""}
-                  onChange={v => setConfig(c => ({ ...c, [field.key]: v }))}
+                  value={config[field.id] ?? ""}
+                  onChange={v => setConfig(c => ({ ...c, [field.id]: v }))}
                   appSlug={template.slug}
                   composeBase={composeBase}
                 />
               );
             }
             return (
-              <div key={field.key} className="form-group">
+              <div key={field.id} className="form-group">
                 <label className="form-label">{field.label}</label>
                 <input
                   className="form-input"
-                  type={field.type === "number" ? "number" : "text"}
-                  value={config[field.key] ?? ""}
-                  onChange={e => setConfig(c => ({ ...c, [field.key]: e.target.value }))}
+                  type={field.type === "number" || field.type === "port" ? "number" : "text"}
+                  value={config[field.id] ?? ""}
+                  onChange={e => setConfig(c => ({ ...c, [field.id]: e.target.value }))}
                   required={field.required}
                 />
               </div>
