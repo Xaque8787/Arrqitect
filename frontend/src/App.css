@@ -111,6 +111,7 @@
   color: var(--color-text); outline: none; transition: border-color var(--transition);
 }
 .form-input:focus { border-color: var(--color-primary); }
+.form-input::placeholder { color: var(--color-text-dim); }
 
 /* Modal */
 .modal-backdrop {
