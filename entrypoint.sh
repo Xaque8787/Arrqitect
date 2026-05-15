@@ -18,6 +18,16 @@ if ! getent passwd appuser > /dev/null 2>&1; then
     useradd -u ${PUID} -g ${PGID} -s /bin/bash -M appuser
 fi
 
+# Add appuser to the docker socket's group so it can call the Docker API
+DOCKER_SOCK=/var/run/docker.sock
+if [ -S "$DOCKER_SOCK" ]; then
+    DOCKER_GID=$(stat -c '%g' "$DOCKER_SOCK")
+    if ! getent group dockersock > /dev/null 2>&1; then
+        groupadd -g "$DOCKER_GID" dockersock
+    fi
+    usermod -aG dockersock appuser
+fi
+
 # Ensure /app is owned correctly
 chown -R ${PUID}:${PGID} /app
 
