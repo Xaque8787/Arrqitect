@@ -92,7 +92,9 @@ function InstallModal({ template, composeBase, onClose, onInstalled }: {
 }) {
   const [name, setName] = useState(template.name);
   const [config, setConfig] = useState<Record<string, string>>(() =>
-    Object.fromEntries(template.config_schema.map(f => [f.id, ""]))
+    Object.fromEntries(
+      template.config_schema.map(f => [f.id, f.default != null ? String(f.default) : ""])
+    )
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -182,8 +182,7 @@ export const DEFAULT_PLACEHOLDERS: Record<ConfigField["type"], string> = {
 
 export function fieldPlaceholder(field: ConfigField): string {
   if (field.placeholder != null) return field.placeholder;
-  const defaultAsHint = field.default != null && field.default !== "" ? String(field.default) : null;
-  return defaultAsHint ?? DEFAULT_PLACEHOLDERS[field.type] ?? "";
+  return DEFAULT_PLACEHOLDERS[field.type] ?? "";
 }
 
 /** Resolve a host path against a compose base + app slug, client-side. */
