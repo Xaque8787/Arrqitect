@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Package, RefreshCw, CircleCheck as CheckCircle, CircleAlert as AlertCircle } from "lucide-react";
-import { api, resolveHostPath } from "../api";
+import { api, resolveHostPath, fieldPlaceholder } from "../api";
 import type { AppTemplate, ConfigField, SyncResult } from "../api";
 
 function StoragePathField({
@@ -32,7 +32,7 @@ function StoragePathField({
           value={value}
           onChange={e => onChange(e.target.value)}
           required={field.required}
-          placeholder={String(field.placeholder ?? field.default ?? "")}
+          placeholder={fieldPlaceholder(field)}
         />
         {resolved && (
           <div className="volume-resolved">
@@ -78,6 +78,7 @@ function ConfigFieldInput({
         value={value}
         onChange={e => onChange(e.target.value)}
         required={field.required}
+        placeholder={fieldPlaceholder(field)}
       />
     </div>
   );

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, Trash2, Eye, RefreshCw } from "lucide-react";
-import { api, resolveHostPath } from "../api";
+import { api, resolveHostPath, fieldPlaceholder } from "../api";
 import type { InstalledApp, ConfigField, PreviewResult } from "../api";
 
 function PreviewModal({ result, onClose }: { result: PreviewResult; onClose: () => void }) {
@@ -84,7 +84,7 @@ function StoragePathField({
           value={value}
           onChange={e => onChange(e.target.value)}
           required={field.required}
-          placeholder={String(field.placeholder ?? field.default ?? "")}
+          placeholder={fieldPlaceholder(field)}
         />
         {resolved && (
           <div className="volume-resolved">
@@ -130,7 +130,7 @@ function ConfigFieldInput({
         value={value}
         onChange={e => onChange(e.target.value)}
         required={field.required}
-        placeholder={String(field.placeholder ?? field.default ?? "")}
+        placeholder={fieldPlaceholder(field)}
       />
     </div>
   );

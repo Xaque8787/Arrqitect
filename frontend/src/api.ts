@@ -172,6 +172,18 @@ export const api = {
   },
 };
 
+export const DEFAULT_PLACEHOLDERS: Record<ConfigField["type"], string> = {
+  storage_path: "Enter host path",
+  port: "Enter port number",
+  string: "Enter value",
+  number: "Enter number",
+  boolean: "",
+};
+
+export function fieldPlaceholder(field: ConfigField): string {
+  return field.placeholder ?? DEFAULT_PLACEHOLDERS[field.type] ?? "";
+}
+
 /** Resolve a host path against a compose base + app slug, client-side. */
 export function resolveHostPath(hostPath: string, appSlug: string, composeBase: string): string {
   if (!hostPath) return "";
