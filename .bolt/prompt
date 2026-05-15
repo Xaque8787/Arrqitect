@@ -1,0 +1,16 @@
+“Does this concept exist because Docker Compose exists?”
+
+If yes:
+
+it belongs in the renderer.
+
+Not:
+
+templates
+IR
+ECB
+hooks
+registry
+jobs
+
+That single heuristic will protect the architecture from regression more than any other rule.
