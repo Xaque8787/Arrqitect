@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, Trash2, Eye, RefreshCw } from "lucide-react";
-import { api } from "../api";
+import { api, resolveHostPath } from "../api";
 import type { InstalledApp, ConfigField, PreviewResult } from "../api";
 
 function PreviewModal({ result, onClose }: { result: PreviewResult; onClose: () => void }) {
@@ -56,9 +56,90 @@ function PreviewModal({ result, onClose }: { result: PreviewResult; onClose: () 
   );
 }
 
-function EditConfigModal({ app, schema, onClose, onSaved }: {
+function StoragePathField({
+  field,
+  value,
+  onChange,
+  appSlug,
+  composeBase,
+}: {
+  field: ConfigField;
+  value: string;
+  onChange: (v: string) => void;
+  appSlug: string;
+  composeBase: string | null;
+}) {
+  const isRelative = value && !value.startsWith("/");
+  const resolved = isRelative && composeBase
+    ? resolveHostPath(value, appSlug, composeBase)
+    : null;
+
+  return (
+    <div className="volume-mount-field">
+      <div className="volume-mount-label">{field.label}</div>
+      <div className="volume-mount-host">
+        <div className="volume-side-tag volume-side-host">Host Path</div>
+        <input
+          className="form-input"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          required={field.required}
+          placeholder={String(field.placeholder ?? field.default ?? "")}
+        />
+        {resolved && (
+          <div className="volume-resolved">
+            <span className="volume-resolved-arrow">↳</span>
+            <code>{resolved}</code>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ConfigFieldInput({
+  field,
+  value,
+  onChange,
+  appSlug,
+  composeBase,
+}: {
+  field: ConfigField;
+  value: string;
+  onChange: (v: string) => void;
+  appSlug: string;
+  composeBase: string | null;
+}) {
+  if (field.type === "storage_path") {
+    return (
+      <StoragePathField
+        field={field}
+        value={value}
+        onChange={onChange}
+        appSlug={appSlug}
+        composeBase={composeBase}
+      />
+    );
+  }
+  return (
+    <div className="form-group">
+      <label className="form-label">{field.label}</label>
+      <input
+        className="form-input"
+        type={field.type === "number" || field.type === "port" ? "number" : "text"}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        required={field.required}
+        placeholder={String(field.placeholder ?? field.default ?? "")}
+      />
+    </div>
+  );
+}
+
+function EditConfigModal({ app, schema, composeBase, onClose, onSaved }: {
   app: InstalledApp;
   schema: ConfigField[];
+  composeBase: string | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -69,6 +150,9 @@ function EditConfigModal({ app, schema, onClose, onSaved }: {
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
 
+  const visibleFields = schema.filter(f => (f.visibility ?? "visible") === "visible");
+  const advancedFields = schema.filter(f => (f.visibility ?? "visible") === "advanced");
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -76,6 +160,7 @@ function EditConfigModal({ app, schema, onClose, onSaved }: {
     try {
       const resolved: Record<string, unknown> = {};
       for (const field of schema) {
+        if ((field.visibility ?? "visible") === "hidden") continue;
         resolved[field.id] = field.type === "number" || field.type === "port"
           ? Number(config[field.id])
           : config[field.id];
@@ -92,22 +177,39 @@ function EditConfigModal({ app, schema, onClose, onSaved }: {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
         <div className="modal-title">Edit Config — {app.name}</div>
         <form onSubmit={handleSubmit}>
-          {schema.map(field => (
-            <div key={field.id} className="form-group">
-              <label className="form-label">{field.label}</label>
-              <input
-                className="form-input"
-                type={field.type === "number" || field.type === "port" ? "number" : "text"}
-                value={config[field.id] ?? ""}
-                onChange={e => setConfig(c => ({ ...c, [field.id]: e.target.value }))}
-                required={field.required}
-              />
-            </div>
+          {visibleFields.map(field => (
+            <ConfigFieldInput
+              key={field.id}
+              field={field}
+              value={config[field.id] ?? ""}
+              onChange={v => setConfig(c => ({ ...c, [field.id]: v }))}
+              appSlug={app.slug}
+              composeBase={composeBase}
+            />
           ))}
-          {error && <div style={{ color: "var(--color-error)", fontSize: 13, marginBottom: 12 }}>{error}</div>}
+
+          {advancedFields.length > 0 && (
+            <details className="advanced-section">
+              <summary className="advanced-section-toggle">Advanced</summary>
+              <div className="advanced-section-body">
+                {advancedFields.map(field => (
+                  <ConfigFieldInput
+                    key={field.id}
+                    field={field}
+                    value={config[field.id] ?? ""}
+                    onChange={v => setConfig(c => ({ ...c, [field.id]: v }))}
+                    appSlug={app.slug}
+                    composeBase={composeBase}
+                  />
+                ))}
+              </div>
+            </details>
+          )}
+
+          {error && <div className="form-error">{error}</div>}
           <div className="modal-actions">
             <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={loading}>
@@ -129,6 +231,7 @@ export default function AppDetail() {
   const [editOpen, setEditOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(false);
+  const [composeBase, setComposeBase] = useState<string | null>(null);
 
   const load = () => {
     if (!id) return;
@@ -136,6 +239,12 @@ export default function AppDetail() {
   };
 
   useEffect(load, [id]);
+
+  useEffect(() => {
+    api.settings.composeBase().then(r => {
+      if (r.host_path) setComposeBase(r.host_path);
+    });
+  }, []);
 
   const handleRemove = async () => {
     if (!app || !confirm(`Remove ${app.name}? This will run docker compose down.`)) return;
@@ -221,6 +330,7 @@ export default function AppDetail() {
         <EditConfigModal
           app={app}
           schema={schema}
+          composeBase={composeBase}
           onClose={() => setEditOpen(false)}
           onSaved={() => { setEditOpen(false); load(); }}
         />

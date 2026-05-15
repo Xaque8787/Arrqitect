@@ -17,6 +17,7 @@ export interface ConfigField {
   label: string;
   type: "port" | "storage_path" | "string" | "number" | "boolean";
   default: string | number | boolean | null;
+  placeholder?: string;
   binds_to: string;
   required: boolean;
   visibility: "visible" | "advanced" | "hidden";

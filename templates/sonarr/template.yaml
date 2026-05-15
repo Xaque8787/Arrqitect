@@ -77,20 +77,22 @@ config_schema:
   - id: tv_path
     label: TV Path
     type: storage_path
-    default: /data/tv
+    default: ""
     binds_to: services.sonarr.storage.tv.host_path
     required: true
     visibility: visible
     source: user
+    placeholder: /data/tv
 
   - id: downloads_path
     label: Downloads Path
     type: storage_path
-    default: /data/downloads
+    default: ""
     binds_to: services.sonarr.storage.downloads.host_path
     required: true
     visibility: visible
     source: user
+    placeholder: /data/downloads
 
   - id: web_ui_port_env
     label: Web UI Port (env)

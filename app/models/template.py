@@ -70,6 +70,7 @@ class ConfigField(BaseModel):
     label: str
     type: Literal["port", "storage_path", "string", "number", "boolean"]
     default: str | int | bool | None = None
+    placeholder: str | None = None
     binds_to: str
     required: bool = False
     visibility: Literal["visible", "advanced", "hidden"] = "visible"

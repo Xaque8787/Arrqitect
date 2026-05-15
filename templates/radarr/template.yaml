@@ -77,20 +77,22 @@ config_schema:
   - id: movies_path
     label: Movies Path
     type: storage_path
-    default: /data/movies
+    default: ""
     binds_to: services.radarr.storage.movies.host_path
     required: true
     visibility: visible
     source: user
+    placeholder: /data/movies
 
   - id: downloads_path
     label: Downloads Path
     type: storage_path
-    default: /data/downloads
+    default: ""
     binds_to: services.radarr.storage.downloads.host_path
     required: true
     visibility: visible
     source: user
+    placeholder: /data/downloads
 
   - id: web_ui_port_env
     label: Web UI Port (env)

@@ -32,7 +32,7 @@ function StoragePathField({
           value={value}
           onChange={e => onChange(e.target.value)}
           required={field.required}
-          placeholder={String(field.default ?? "")}
+          placeholder={String(field.placeholder ?? field.default ?? "")}
         />
         {resolved && (
           <div className="volume-resolved">
