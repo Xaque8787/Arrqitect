@@ -85,6 +85,7 @@ class ConfigField(BaseModel):
     source: Literal["user", "platform", "derived"] = "user"
     allowed_values: list[str] | None = None
     ui_widget: Literal["input", "select"] = "input"
+    editable: bool = True
 
 
 class AppModel(BaseModel):

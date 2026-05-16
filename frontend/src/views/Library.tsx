@@ -33,6 +33,7 @@ function StoragePathField({
           onChange={e => onChange(e.target.value)}
           required={field.required}
           placeholder={fieldPlaceholder(field)}
+          disabled={field.editable === false}
         />
         {resolved && (
           <div className="volume-resolved">
@@ -78,6 +79,7 @@ function ConfigFieldInput({
           value={value}
           onChange={e => onChange(e.target.value)}
           required={field.required}
+          disabled={field.editable === false}
         >
           {field.allowed_values.map(v => (
             <option key={v} value={v}>{v}</option>
@@ -96,6 +98,7 @@ function ConfigFieldInput({
         onChange={e => onChange(e.target.value)}
         required={field.required}
         placeholder={fieldPlaceholder(field)}
+        disabled={field.editable === false}
       />
     </div>
   );

@@ -85,6 +85,7 @@ function StoragePathField({
           onChange={e => onChange(e.target.value)}
           required={field.required}
           placeholder={fieldPlaceholder(field)}
+          disabled={field.editable === false}
         />
         {resolved && (
           <div className="volume-resolved">
@@ -121,6 +122,24 @@ function ConfigFieldInput({
       />
     );
   }
+  if (field.ui_widget === "select" && field.allowed_values?.length) {
+    return (
+      <div className="form-group">
+        <label className="form-label">{field.label}</label>
+        <select
+          className="form-input"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          required={field.required}
+          disabled={field.editable === false}
+        >
+          {field.allowed_values.map(v => (
+            <option key={v} value={v}>{v}</option>
+          ))}
+        </select>
+      </div>
+    );
+  }
   return (
     <div className="form-group">
       <label className="form-label">{field.label}</label>
@@ -131,6 +150,7 @@ function ConfigFieldInput({
         onChange={e => onChange(e.target.value)}
         required={field.required}
         placeholder={fieldPlaceholder(field)}
+        disabled={field.editable === false}
       />
     </div>
   );

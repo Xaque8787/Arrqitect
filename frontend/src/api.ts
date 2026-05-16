@@ -24,6 +24,7 @@ export interface ConfigField {
   source: "user" | "platform" | "derived";
   allowed_values?: string[] | null;
   ui_widget?: "input" | "select";
+  editable?: boolean;
 }
 
 export interface CapabilityProvides {
