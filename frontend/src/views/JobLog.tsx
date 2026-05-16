@@ -24,13 +24,19 @@ export default function JobLog() {
   useEffect(() => {
     if (!id) return;
 
+    const TERMINAL = new Set(["success", "failed", "cancelled"]);
+
     api.jobs.get(id).then(j => {
       setJob(j);
       setJobStatus(j.status);
-      setSteps(j.job_steps ?? []);
+      // HTTP is the source of truth only for terminal jobs — WS owns step state for active jobs
+      if (TERMINAL.has(j.status)) {
+        setSteps(j.job_steps ?? []);
+      }
       setLoading(false);
     });
 
+    // WS always opens — reducer decides whether to apply or ignore
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${proto}://${window.location.host}/ws/jobs/${id}`);
     wsRef.current = ws;
@@ -40,6 +46,10 @@ export default function JobLog() {
       if (data.type === "step") {
         setSteps(prev => {
           const idx = prev.findIndex(s => s.step === data.step);
+          if (idx >= 0 && TERMINAL.has(prev[idx].status)) {
+            // Never overwrite a terminal step — discard the incoming message
+            return prev;
+          }
           const updated: JobStep = {
             id: "",
             job_id: id,

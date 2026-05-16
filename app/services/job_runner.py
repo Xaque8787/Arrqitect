@@ -442,7 +442,7 @@ async def _docker_compose(compose_path: str, args: list[str]) -> subprocess.Comp
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
         None,
-        lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=120),
+        lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=300),
     )
 
 
