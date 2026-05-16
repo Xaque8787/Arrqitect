@@ -20,6 +20,7 @@ export default function JobLog() {
   const [loading, setLoading] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const terminalRef = useRef(false);
 
   useEffect(() => {
     if (!id) return;
@@ -28,7 +29,10 @@ export default function JobLog() {
 
     api.jobs.get(id).then(j => {
       setJob(j);
-      setJobStatus(j.status);
+      // Only apply HTTP status if WS hasn't already delivered a terminal state
+      if (!terminalRef.current) {
+        setJobStatus(j.status);
+      }
       // HTTP is the source of truth only for terminal jobs — WS owns step state for active jobs
       if (TERMINAL.has(j.status)) {
         setSteps(j.job_steps ?? []);
@@ -68,6 +72,7 @@ export default function JobLog() {
         });
         setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
       } else if (data.type === "job_status") {
+        terminalRef.current = TERMINAL.has(data.status);
         setJobStatus(data.status);
       }
     };
