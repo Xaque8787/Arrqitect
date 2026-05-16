@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Package, RefreshCw, CircleCheck as CheckCircle, CircleAlert as AlertCircle } from "lucide-react";
+import { Package, RefreshCw, CircleCheck as CheckCircle, CircleAlert as AlertCircle, X, Plus } from "lucide-react";
 import { api, resolveHostPath, fieldPlaceholder } from "../api";
-import type { AppTemplate, ConfigField, SyncResult } from "../api";
+import type { AppTemplate, ConfigField, SyncResult, CustomEnvEntry, CustomStorageEntry } from "../api";
 
 function StoragePathField({
   field,
@@ -104,6 +104,149 @@ function ConfigFieldInput({
   );
 }
 
+function CustomEnvSection({
+  entries,
+  onChange,
+}: {
+  entries: CustomEnvEntry[];
+  onChange: (entries: CustomEnvEntry[]) => void;
+}) {
+  const add = () => onChange([...entries, { key: "", value: "" }]);
+  const remove = (i: number) => onChange(entries.filter((_, idx) => idx !== i));
+  const update = (i: number, field: keyof CustomEnvEntry, val: string) => {
+    const next = entries.map((e, idx) => idx === i ? { ...e, [field]: val } : e);
+    onChange(next);
+  };
+
+  return (
+    <div className="custom-section">
+      <div className="custom-section-header">
+        <span className="custom-section-label">Custom Environment Variables</span>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={add}>
+          <Plus size={12} /> Add Variable
+        </button>
+      </div>
+      {entries.length === 0 ? (
+        <div className="custom-empty">No custom variables added.</div>
+      ) : (
+        <div className="custom-rows">
+          {entries.map((entry, i) => (
+            <div key={i} className="custom-row">
+              <input
+                className="form-input"
+                placeholder="KEY"
+                value={entry.key}
+                onChange={e => update(i, "key", e.target.value)}
+                style={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}
+              />
+              <span className="custom-row-sep">=</span>
+              <input
+                className="form-input"
+                placeholder="value"
+                value={entry.value}
+                onChange={e => update(i, "value", e.target.value)}
+              />
+              <button type="button" className="custom-row-remove" onClick={() => remove(i)} title="Remove">
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CustomStorageSection({
+  entries,
+  onChange,
+}: {
+  entries: CustomStorageEntry[];
+  onChange: (entries: CustomStorageEntry[]) => void;
+}) {
+  const add = () => onChange([...entries, { host_path: "", container_path: "", propagation: "private", mutability: "read-write" }]);
+  const remove = (i: number) => onChange(entries.filter((_, idx) => idx !== i));
+  const update = (i: number, field: keyof CustomStorageEntry, val: string) => {
+    const next = entries.map((e, idx) => idx === i ? { ...e, [field]: val } : e);
+    onChange(next);
+  };
+
+  return (
+    <div className="custom-section">
+      <div className="custom-section-header">
+        <span className="custom-section-label">Custom Volumes</span>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={add}>
+          <Plus size={12} /> Add Volume
+        </button>
+      </div>
+      {entries.length === 0 ? (
+        <div className="custom-empty">No custom volumes added.</div>
+      ) : (
+        <div className="custom-rows">
+          {entries.map((entry, i) => (
+            <div key={i} className="custom-row">
+              <input
+                className="form-input"
+                placeholder="Host path (e.g. /mnt/media)"
+                value={entry.host_path}
+                onChange={e => update(i, "host_path", e.target.value)}
+              />
+              <span className="custom-row-sep">→</span>
+              <input
+                className="form-input"
+                placeholder="Container path (e.g. /media)"
+                value={entry.container_path}
+                onChange={e => update(i, "container_path", e.target.value)}
+                style={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}
+              />
+              <button type="button" className="custom-row-remove" onClick={() => remove(i)} title="Remove">
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CustomStoragePropagationRows({
+  entries,
+  onChange,
+}: {
+  entries: CustomStorageEntry[];
+  onChange: (entries: CustomStorageEntry[]) => void;
+}) {
+  if (entries.length === 0) return null;
+  const update = (i: number, val: CustomStorageEntry["propagation"]) => {
+    const next = entries.map((e, idx) => idx === i ? { ...e, propagation: val } : e);
+    onChange(next);
+  };
+
+  return (
+    <>
+      {entries.map((entry, i) => {
+        const label = entry.container_path || `Volume ${i + 1}`;
+        return (
+          <div className="form-group" key={i}>
+            <label className="form-label">{label} — Propagation</label>
+            <select
+              className="form-input"
+              value={entry.propagation}
+              onChange={e => update(i, e.target.value as CustomStorageEntry["propagation"])}
+            >
+              <option value="private">private</option>
+              <option value="shared">shared</option>
+              <option value="slave">slave</option>
+              <option value="rslave">rslave</option>
+            </select>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 function InstallModal({ template, composeBase, onClose, onInstalled }: {
   template: AppTemplate;
   composeBase: string | null;
@@ -116,12 +259,16 @@ function InstallModal({ template, composeBase, onClose, onInstalled }: {
       template.config_schema.map(f => [f.id, f.default != null ? String(f.default) : ""])
     )
   );
+  const [customEnv, setCustomEnv] = useState<CustomEnvEntry[]>([]);
+  const [customStorage, setCustomStorage] = useState<CustomStorageEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const visibleFields = template.config_schema.filter(f => (f.visibility ?? "visible") === "visible");
   const advancedFields = template.config_schema.filter(f => (f.visibility ?? "visible") === "advanced");
+
+  const hasAdvanced = advancedFields.length > 0 || customStorage.length > 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -133,6 +280,12 @@ function InstallModal({ template, composeBase, onClose, onInstalled }: {
         resolvedConfig[field.id] = field.type === "number" || field.type === "port"
           ? Number(config[field.id])
           : config[field.id];
+      }
+      if (template.allow_custom_env) {
+        resolvedConfig.custom_env = customEnv.filter(e => e.key.trim());
+      }
+      if (template.allow_custom_storage) {
+        resolvedConfig.custom_storage = customStorage.filter(e => e.host_path.trim() && e.container_path.trim());
       }
       const { job } = await api.apps.install(template.slug, name, resolvedConfig);
       onInstalled();
@@ -180,7 +333,15 @@ function InstallModal({ template, composeBase, onClose, onInstalled }: {
             />
           ))}
 
-          {advancedFields.length > 0 && (
+          {template.allow_custom_storage && (
+            <CustomStorageSection entries={customStorage} onChange={setCustomStorage} />
+          )}
+
+          {template.allow_custom_env && (
+            <CustomEnvSection entries={customEnv} onChange={setCustomEnv} />
+          )}
+
+          {hasAdvanced && (
             <details className="advanced-section">
               <summary className="advanced-section-toggle">Advanced</summary>
               <div className="advanced-section-body">
@@ -194,6 +355,9 @@ function InstallModal({ template, composeBase, onClose, onInstalled }: {
                     composeBase={composeBase}
                   />
                 ))}
+                {template.allow_custom_storage && customStorage.length > 0 && (
+                  <CustomStoragePropagationRows entries={customStorage} onChange={setCustomStorage} />
+                )}
               </div>
             </details>
           )}

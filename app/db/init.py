@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS app_templates (
     config_schema    TEXT NOT NULL DEFAULT '[]',
     hook_definitions TEXT NOT NULL DEFAULT '{}',
     provides         TEXT NOT NULL DEFAULT '[]',
+    allow_custom_env     INTEGER NOT NULL DEFAULT 0,
+    allow_custom_storage INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );

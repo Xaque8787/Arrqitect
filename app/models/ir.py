@@ -24,6 +24,7 @@ class StorageMountIR(BaseModel):
     propagation: MountPropagationIR = MountPropagationIR()
     mutability: Literal["read-write", "read-only"]
     durability: str
+    is_custom: bool = False
 
 
 class PortIR(BaseModel):
@@ -39,6 +40,7 @@ class EnvVarIR(BaseModel):
     value: str
     source: Literal["global", "user_config", "registry", "derived"]
     source_key: str | None = None    # provenance: which config field or registry key
+    is_custom: bool = False
 
 
 class LifecycleIR(BaseModel):

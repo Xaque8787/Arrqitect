@@ -34,6 +34,18 @@ export interface CapabilityProvides {
   rotates: boolean;
 }
 
+export interface CustomEnvEntry {
+  key: string;
+  value: string;
+}
+
+export interface CustomStorageEntry {
+  host_path: string;
+  container_path: string;
+  propagation: "private" | "shared" | "slave" | "rslave";
+  mutability: "read-write" | "read-only";
+}
+
 export interface AppTemplate {
   id: string;
   slug: string;
@@ -47,6 +59,8 @@ export interface AppTemplate {
   config_schema: ConfigField[];
   hook_definitions: Record<string, string>;
   provides: CapabilityProvides[];
+  allow_custom_env: boolean;
+  allow_custom_storage: boolean;
 }
 
 export interface TemplateVersion {
@@ -75,6 +89,7 @@ export interface InstalledApp {
   created_at: string;
   app_templates?: AppTemplate & {
     installed_version: string | null;
+    compose_template?: string;
   };
 }
 

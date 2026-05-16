@@ -220,6 +220,73 @@ def resolve_env_vars(
     return env_vars
 
 
+def resolve_custom_storage(
+    custom_entries: list[dict],
+    app_slug: str,
+    compose_base: str,
+    existing_ids: set[str],
+) -> list[StorageMountIR]:
+    """
+    Compile user-defined custom mount rows into StorageMountIR objects.
+    Each entry must have host_path, container_path; propagation and mutability
+    are optional and default to "private" / "read-write".
+    IDs are generated as custom-storage-N and validated against existing_ids.
+    """
+    mounts: list[StorageMountIR] = []
+    for i, entry in enumerate(custom_entries, start=1):
+        host_path = entry.get("host_path", "").strip()
+        container_path = entry.get("container_path", "").strip()
+        if not host_path or not container_path:
+            continue
+
+        mount_id = f"custom-storage-{i}"
+        if mount_id in existing_ids:
+            # collision guard — skip rather than corrupt; compiler validates further
+            continue
+
+        host_path = resolve_host_path(host_path, app_slug, compose_base)
+        prop_template = entry.get("propagation", "private")
+        prop_mode = _PROPAGATION_INTENT.get(prop_template, "none")
+        mutability = entry.get("mutability", "read-write")
+        if mutability not in ("read-write", "read-only"):
+            mutability = "read-write"
+
+        mounts.append(StorageMountIR(
+            id=mount_id,
+            host_path=host_path,
+            container_path=container_path,
+            persistence="persistent",
+            propagation=MountPropagationIR(mode=prop_mode),
+            mutability=mutability,
+            durability="user-data",
+            is_custom=True,
+        ))
+
+    return mounts
+
+
+def resolve_custom_env(custom_entries: list[dict]) -> list[EnvVarIR]:
+    """
+    Compile user-defined custom env var rows into EnvVarIR objects.
+    Each entry must have key and value. Empty keys are skipped.
+    Ordering is preserved; last-write-wins dedup is handled in the compiler.
+    """
+    env_vars: list[EnvVarIR] = []
+    for entry in custom_entries:
+        key = entry.get("key", "").strip()
+        value = entry.get("value", "")
+        if not key:
+            continue
+        env_vars.append(EnvVarIR(
+            name=key,
+            value=value,
+            source="user_config",
+            source_key=None,
+            is_custom=True,
+        ))
+    return env_vars
+
+
 def resolve_lifecycle(service: ServiceModel) -> LifecycleIR:
     return LifecycleIR(restart_behavior=service.lifecycle.restart.behavior)
 

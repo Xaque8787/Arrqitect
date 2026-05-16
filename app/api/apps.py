@@ -42,6 +42,7 @@ async def list_installed():
             SELECT a.*,
                    t.slug AS t_slug, t.name AS t_name, t.icon_url AS t_icon_url,
                    t.latest_version,
+                   t.allow_custom_env, t.allow_custom_storage,
                    v.version AS installed_version,
                    v.config_schema, v.hook_definitions, v.provides
             FROM installed_apps a
@@ -60,6 +61,8 @@ async def list_installed():
             "icon_url": d.pop("t_icon_url"),
             "latest_version": d.pop("latest_version", ""),
             "installed_version": d.pop("installed_version", None),
+            "allow_custom_env": bool(d.pop("allow_custom_env", 0)),
+            "allow_custom_storage": bool(d.pop("allow_custom_storage", 0)),
             "config_schema": json.loads(d.pop("config_schema")) if isinstance(d.get("config_schema"), str) else d.pop("config_schema", []),
             "hook_definitions": json.loads(d.pop("hook_definitions")) if isinstance(d.get("hook_definitions"), str) else d.pop("hook_definitions", {}),
             "provides": json.loads(d.pop("provides")) if isinstance(d.get("provides"), str) else d.pop("provides", []),
@@ -75,6 +78,7 @@ async def get_installed(app_id: str):
             SELECT a.*,
                    t.slug AS t_slug, t.name AS t_name, t.icon_url AS t_icon_url,
                    t.latest_version,
+                   t.allow_custom_env, t.allow_custom_storage,
                    v.version AS installed_version,
                    v.config_schema, v.hook_definitions, v.provides,
                    v.compose AS compose_template
@@ -95,6 +99,8 @@ async def get_installed(app_id: str):
         "icon_url": d.pop("t_icon_url"),
         "latest_version": d.pop("latest_version", ""),
         "installed_version": d.pop("installed_version", None),
+        "allow_custom_env": bool(d.pop("allow_custom_env", 0)),
+        "allow_custom_storage": bool(d.pop("allow_custom_storage", 0)),
         "config_schema": json.loads(d.pop("config_schema")) if isinstance(d.get("config_schema"), str) else d.pop("config_schema", []),
         "hook_definitions": json.loads(d.pop("hook_definitions")) if isinstance(d.get("hook_definitions"), str) else d.pop("hook_definitions", {}),
         "provides": json.loads(d.pop("provides")) if isinstance(d.get("provides"), str) else d.pop("provides", []),

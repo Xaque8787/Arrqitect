@@ -17,6 +17,8 @@ from app.services.ecb.resolver import (
     resolve_storage,
     resolve_ports,
     resolve_env_vars,
+    resolve_custom_storage,
+    resolve_custom_env,
     resolve_lifecycle,
 )
 from app.services.ecb.network import infer_networks
@@ -42,6 +44,9 @@ def compile_app(
 
     services: list[ServiceIR] = []
 
+    custom_storage_entries: list[dict] = user_config.get("custom_storage", []) or []
+    custom_env_entries: list[dict] = user_config.get("custom_env", []) or []
+
     for service_tmpl in template.services:
         storage = resolve_storage(
             service_tmpl,
@@ -50,6 +55,26 @@ def compile_app(
             compose_base,
             template.config_schema,
         )
+
+        # Compile custom mounts and append — no template-defined ID can collide
+        existing_storage_ids = {m.id for m in storage}
+        custom_mounts = resolve_custom_storage(
+            custom_storage_entries,
+            app_slug,
+            compose_base,
+            existing_storage_ids,
+        )
+
+        # Duplicate container path validation — compiler is the right boundary
+        all_mounts = storage + custom_mounts
+        seen_container_paths: set[str] = set()
+        for mount in all_mounts:
+            if mount.container_path in seen_container_paths:
+                raise ValueError(
+                    f"Duplicate container path '{mount.container_path}' in app '{app_slug}'"
+                )
+            seen_container_paths.add(mount.container_path)
+
         ports = resolve_ports(
             service_tmpl,
             resolved_config,
@@ -64,14 +89,22 @@ def compile_app(
             app_slug,
             template.app.flavor,
         )
+
+        # Append custom env vars — last-write-wins by building a name-keyed dict
+        custom_env = resolve_custom_env(custom_env_entries)
+        env_by_name: dict[str, object] = {e.name: e for e in env_vars}
+        for e in custom_env:
+            env_by_name[e.name] = e  # custom overrides template env on collision
+        merged_env = list(env_by_name.values())
+
         lifecycle = resolve_lifecycle(service_tmpl)
 
         services.append(ServiceIR(
             id=service_tmpl.id,
             image_repository=service_tmpl.image.repository,
             image_tag=service_tmpl.image.tag,
-            env_vars=env_vars,
-            storage=storage,
+            env_vars=merged_env,
+            storage=all_mounts,
             ports=ports,
             networks=memberships,
             lifecycle=lifecycle,

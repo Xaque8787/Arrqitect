@@ -93,6 +93,8 @@ class AppModel(BaseModel):
     name: str
     version: str
     flavor: Literal["linuxserver", "generic"] = "generic"
+    allow_custom_env: bool = False
+    allow_custom_storage: bool = False
 
 
 class TemplateModel(BaseModel):

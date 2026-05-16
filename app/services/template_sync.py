@@ -136,6 +136,8 @@ def _ingest_v2(raw_text: str, raw: dict, source_url: str, conn) -> dict:
         config_schema=config_schema_json,
         hook_definitions=hooks_json,
         provides=provides_json,
+        allow_custom_env=template_model.app.allow_custom_env,
+        allow_custom_storage=template_model.app.allow_custom_storage,
     )
 
     existing_ver = conn.execute(
@@ -250,6 +252,7 @@ def _ingest_v1(raw: dict, source_url: str, conn) -> dict:
 def _upsert_app_template(
     conn, slug: str, name: str, description: str, icon_url: str, source_url: str,
     compose_template: str, config_schema: str, hook_definitions: str, provides: str,
+    allow_custom_env: bool = False, allow_custom_storage: bool = False,
 ) -> str:
     existing = conn.execute(
         "SELECT id FROM app_templates WHERE slug = ?", (slug,)
@@ -259,19 +262,22 @@ def _upsert_app_template(
         template_id = existing[0]
         conn.execute("""
             UPDATE app_templates SET
-                name             = ?,
-                description      = ?,
-                icon_url         = ?,
-                source_url       = ?,
-                compose_template = ?,
-                config_schema    = ?,
-                hook_definitions = ?,
-                provides         = ?,
-                updated_at       = ?
+                name                 = ?,
+                description          = ?,
+                icon_url             = ?,
+                source_url           = ?,
+                compose_template     = ?,
+                config_schema        = ?,
+                hook_definitions     = ?,
+                provides             = ?,
+                allow_custom_env     = ?,
+                allow_custom_storage = ?,
+                updated_at           = ?
             WHERE id = ?
         """, (
             name, description, icon_url, source_url,
             compose_template, config_schema, hook_definitions, provides,
+            int(allow_custom_env), int(allow_custom_storage),
             _now(), template_id,
         ))
     else:
@@ -279,11 +285,13 @@ def _upsert_app_template(
         conn.execute("""
             INSERT INTO app_templates
                 (id, slug, name, description, icon_url, source_url,
-                 compose_template, config_schema, hook_definitions, provides)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 compose_template, config_schema, hook_definitions, provides,
+                 allow_custom_env, allow_custom_storage)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             template_id, slug, name, description, icon_url, source_url,
             compose_template, config_schema, hook_definitions, provides,
+            int(allow_custom_env), int(allow_custom_storage),
         ))
 
     return template_id
