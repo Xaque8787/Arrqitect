@@ -29,6 +29,7 @@ from app.db.client import get_db
 from app.models.ir import AppIR
 from app.services.ecb import compile_app
 from app.services.ecb.parser import parse_template, PassthroughTemplate
+from app.services.ecb.resolver import get_compose_base
 from app.services.renderers.compose import ComposeRenderer
 
 # Legacy render functions — used only for schema_version 1 passthrough apps
@@ -249,15 +250,27 @@ def _extract_puid_pgid(app_ir: AppIR) -> tuple[str, str] | tuple[None, None]:
     return None, None
 
 
-def _prepare_mount_ownership(app_ir: AppIR, puid: str, pgid: str) -> list[str]:
+def _to_container_path(host_path: str, compose_base: str) -> str | None:
+    """
+    Translate a host-side path to its container-side equivalent.
+    Returns None if the path is outside the mounted compose directory.
+    """
+    try:
+        rel = Path(host_path).relative_to(compose_base)
+        return str(Path(CONTAINER_COMPOSE_DIR) / rel)
+    except ValueError:
+        return None
+
+
+def _prepare_mount_ownership(app_ir: AppIR, puid: str, pgid: str, compose_base: str) -> list[str]:
     """
     Return log lines describing what was done.
     For each persistent, read-write mount:
-      - Directory already exists: skip entirely (never chown pre-populated trees).
-      - Directory is new: mkdir -p + chown -R regardless of is_custom.
-        is_custom only means the mount was added via "Add Volume" — it still
-        needs correct ownership if we're the ones creating it.
-      - mkdir fails (permission denied etc.): warn and continue.
+      - Path outside the arrqitect compose mount: skip. Docker will create it
+        as root if needed — expected behavior for user-managed external paths.
+      - Directory already exists (container-side check): skip entirely.
+      - Directory is new: mkdir -p + chown -R via the container-side path.
+      - mkdir fails: warn and continue.
     """
     log_lines: list[str] = []
 
@@ -267,14 +280,23 @@ def _prepare_mount_ownership(app_ir: AppIR, puid: str, pgid: str) -> list[str]:
                 continue
 
             host_path = mount.host_path
-            existed = Path(host_path).exists()
+            container_path = _to_container_path(host_path, compose_base)
+
+            if container_path is None:
+                log_lines.append(
+                    f"skip  {host_path} (outside arrqitect compose directory — "
+                    f"Docker will create it if needed)"
+                )
+                continue
+
+            existed = Path(container_path).exists()
 
             if existed:
                 log_lines.append(f"skip  {host_path} (already exists)")
                 continue
 
             try:
-                Path(host_path).mkdir(parents=True, exist_ok=True)
+                Path(container_path).mkdir(parents=True, exist_ok=True)
             except OSError as exc:
                 log_lines.append(
                     f"warn  {host_path} — could not create directory ({exc.strerror}); "
@@ -283,7 +305,7 @@ def _prepare_mount_ownership(app_ir: AppIR, puid: str, pgid: str) -> list[str]:
                 continue
 
             subprocess.run(
-                ["chown", "-R", f"{puid}:{pgid}", host_path],
+                ["chown", "-R", f"{puid}:{pgid}", container_path],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -382,8 +404,9 @@ async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> No
                 await _add_step(job_id, "chown_dirs", "running",
                                 f"Preparing mount ownership (PUID={puid} PGID={pgid})")
                 loop = asyncio.get_event_loop()
+                compose_base = get_compose_base()
                 log_lines = await loop.run_in_executor(
-                    None, lambda: _prepare_mount_ownership(app_ir, puid, pgid)
+                    None, lambda: _prepare_mount_ownership(app_ir, puid, pgid, compose_base)
                 )
                 await _add_step(job_id, "chown_dirs", "success",
                                 "\n".join(log_lines) or "No mounts required ownership changes",
@@ -463,8 +486,9 @@ async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
                 await _add_step(job_id, "chown_dirs", "running",
                                 f"Preparing mount ownership (PUID={puid} PGID={pgid})")
                 loop = asyncio.get_event_loop()
+                compose_base = get_compose_base()
                 log_lines = await loop.run_in_executor(
-                    None, lambda: _prepare_mount_ownership(app_ir, puid, pgid)
+                    None, lambda: _prepare_mount_ownership(app_ir, puid, pgid, compose_base)
                 )
                 await _add_step(job_id, "chown_dirs", "success",
                                 "\n".join(log_lines) or "No mounts required ownership changes",
