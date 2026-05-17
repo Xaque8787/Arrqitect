@@ -253,10 +253,11 @@ def _prepare_mount_ownership(app_ir: AppIR, puid: str, pgid: str) -> list[str]:
     """
     Return log lines describing what was done.
     For each persistent, read-write mount:
-      - template mounts (is_custom=False): mkdir -p + chown -R if directory is new
-      - custom mounts (is_custom=True):    mkdir -p only; never chown user-supplied paths
-    Skips mounts where the directory already existed (safe re-run, avoids
-    recursively chowning large or pre-populated trees).
+      - Directory already exists: skip entirely (never chown pre-populated trees).
+      - Directory is new: mkdir -p + chown -R regardless of is_custom.
+        is_custom only means the mount was added via "Add Volume" — it still
+        needs correct ownership if we're the ones creating it.
+      - mkdir fails (permission denied etc.): warn and continue.
     """
     log_lines: list[str] = []
 
@@ -281,16 +282,13 @@ def _prepare_mount_ownership(app_ir: AppIR, puid: str, pgid: str) -> list[str]:
                 )
                 continue
 
-            if mount.is_custom:
-                log_lines.append(f"mkdir {host_path} (custom mount — ownership not changed)")
-            else:
-                subprocess.run(
-                    ["chown", "-R", f"{puid}:{pgid}", host_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                log_lines.append(f"mkdir+chown {puid}:{pgid} {host_path}")
+            subprocess.run(
+                ["chown", "-R", f"{puid}:{pgid}", host_path],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            log_lines.append(f"mkdir+chown {puid}:{pgid} {host_path}")
 
     return log_lines
 
