@@ -115,6 +115,9 @@ CREATE INDEX IF NOT EXISTS idx_runtime_deps_consumer   ON runtime_dependencies(c
 CREATE INDEX IF NOT EXISTS idx_runtime_deps_provider   ON runtime_dependencies(provider_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_app                ON jobs(installed_app_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status             ON jobs(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_one_active_per_app_type
+    ON jobs (installed_app_id, type)
+    WHERE status IN ('pending', 'running');
 CREATE INDEX IF NOT EXISTS idx_job_steps_job           ON job_steps(job_id);
 CREATE INDEX IF NOT EXISTS idx_registry_key            ON app_registry(key);
 CREATE INDEX IF NOT EXISTS idx_registry_provider       ON app_registry(provider_id);

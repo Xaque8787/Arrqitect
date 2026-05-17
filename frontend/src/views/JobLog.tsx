@@ -27,20 +27,22 @@ export default function JobLog() {
 
     const TERMINAL = new Set(["success", "failed", "cancelled"]);
 
-    api.jobs.get(id).then(j => {
-      setJob(j);
-      // Only apply HTTP status if WS hasn't already delivered a terminal state
-      if (!terminalRef.current) {
-        setJobStatus(j.status);
-      }
-      // HTTP is the source of truth only for terminal jobs — WS owns step state for active jobs
-      if (TERMINAL.has(j.status)) {
-        setSteps(j.job_steps ?? []);
-      }
-      setLoading(false);
-    });
+    const fetchSnapshot = () =>
+      api.jobs.get(id).then(j => {
+        setJob(j);
+        if (!terminalRef.current) {
+          setJobStatus(j.status);
+        }
+        if (TERMINAL.has(j.status)) {
+          terminalRef.current = true;
+          setJobStatus(j.status);
+          setSteps(j.job_steps ?? []);
+        }
+        setLoading(false);
+      });
 
-    // WS always opens — reducer decides whether to apply or ignore
+    fetchSnapshot();
+
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${proto}://${window.location.host}/ws/jobs/${id}`);
     wsRef.current = ws;
@@ -51,7 +53,6 @@ export default function JobLog() {
         setSteps(prev => {
           const idx = prev.findIndex(s => s.step === data.step);
           if (idx >= 0 && TERMINAL.has(prev[idx].status)) {
-            // Never overwrite a terminal step — discard the incoming message
             return prev;
           }
           const updated: JobStep = {
@@ -76,6 +77,11 @@ export default function JobLog() {
         setJobStatus(data.status);
       }
     };
+
+    // On disconnect, refetch canonical state unconditionally — the job may have
+    // completed between the drop and now, so HTTP is the only reliable source.
+    ws.onclose = () => { fetchSnapshot(); };
+    ws.onerror = () => { fetchSnapshot(); };
 
     return () => ws.close();
   }, [id]);

@@ -71,6 +71,18 @@ def _now() -> str:
 async def enqueue_job(installed_app_id: str, job_type: str, dry_run: bool = False) -> dict:
     job_id = secrets.token_hex(16)
     async with get_db() as db:
+        async with db.execute("""
+            SELECT id FROM jobs
+            WHERE installed_app_id = ?
+              AND type = ?
+              AND status IN ('pending', 'running')
+            LIMIT 1
+        """, (installed_app_id, job_type)) as cur:
+            existing = await cur.fetchone()
+
+        if existing:
+            return {"id": existing[0], "type": job_type, "status": "pending", "dry_run": dry_run, "deduplicated": True}
+
         await db.execute("""
             INSERT INTO jobs (id, installed_app_id, type, status, dry_run)
             VALUES (?, ?, ?, 'pending', ?)
