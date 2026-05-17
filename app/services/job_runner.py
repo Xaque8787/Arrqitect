@@ -272,7 +272,14 @@ def _prepare_mount_ownership(app_ir: AppIR, puid: str, pgid: str) -> list[str]:
                 log_lines.append(f"skip  {host_path} (already exists)")
                 continue
 
-            Path(host_path).mkdir(parents=True, exist_ok=True)
+            try:
+                Path(host_path).mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                log_lines.append(
+                    f"warn  {host_path} — could not create directory ({exc.strerror}); "
+                    f"ensure it exists on the host before starting the container"
+                )
+                continue
 
             if mount.is_custom:
                 log_lines.append(f"mkdir {host_path} (custom mount — ownership not changed)")
