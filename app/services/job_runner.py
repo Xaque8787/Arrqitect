@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Callable, Awaitable
 
 from app.db.client import get_db
+from app.models.ir import AppIR
 from app.services.ecb import compile_app
 from app.services.ecb.parser import parse_template, PassthroughTemplate
 from app.services.renderers.compose import ComposeRenderer
@@ -221,10 +222,64 @@ def _is_passthrough(app: dict) -> bool:
     return bool(app.get("has_passthrough", 0))
 
 
-async def _compile_and_render(job_id: str, app_id: str, app: dict) -> tuple[str, str, str, str]:
+def _extract_puid_pgid(app_ir: AppIR) -> tuple[str, str] | tuple[None, None]:
+    """
+    Scan resolved EnvVarIR entries for PUID and PGID.
+    Returns (puid, pgid) as numeric strings, or (None, None) if either is absent
+    or non-numeric (guards against accidental variable substitution).
+    """
+    for svc in app_ir.services:
+        env_by_name = {e.name: e.value for e in svc.env_vars}
+        puid = env_by_name.get("PUID")
+        pgid = env_by_name.get("PGID")
+        if puid and pgid and puid.isdigit() and pgid.isdigit():
+            return puid, pgid
+    return None, None
+
+
+def _prepare_mount_ownership(app_ir: AppIR, puid: str, pgid: str) -> list[str]:
+    """
+    Return log lines describing what was done.
+    For each persistent, read-write mount:
+      - template mounts (is_custom=False): mkdir -p + chown -R if directory is new
+      - custom mounts (is_custom=True):    mkdir -p only; never chown user-supplied paths
+    Skips mounts where the directory already existed (safe re-run, avoids
+    recursively chowning large or pre-populated trees).
+    """
+    log_lines: list[str] = []
+
+    for svc in app_ir.services:
+        for mount in svc.storage:
+            if mount.persistence != "persistent" or mount.mutability != "read-write":
+                continue
+
+            host_path = mount.host_path
+            existed = Path(host_path).exists()
+
+            if existed:
+                log_lines.append(f"skip  {host_path} (already exists)")
+                continue
+
+            Path(host_path).mkdir(parents=True, exist_ok=True)
+
+            if mount.is_custom:
+                log_lines.append(f"mkdir {host_path} (custom mount — ownership not changed)")
+            else:
+                subprocess.run(
+                    ["chown", "-R", f"{puid}:{pgid}", host_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                log_lines.append(f"mkdir+chown {puid}:{pgid} {host_path}")
+
+    return log_lines
+
+
+async def _compile_and_render(job_id: str, app_id: str, app: dict) -> tuple[str, str, str, str, AppIR]:
     """
     Run the ECB + renderer pipeline for schema_version 2 apps.
-    Returns (compose_yaml, env_content, ir_hash, compose_hash).
+    Returns (compose_yaml, env_content, ir_hash, compose_hash, app_ir).
     """
     service_definitions = app.get("service_definitions", "")
     if not service_definitions:
@@ -258,13 +313,14 @@ async def _compile_and_render(job_id: str, app_id: str, app: dict) -> tuple[str,
     compose_yaml, env_content = renderer.render()
     compose_hash = renderer.compose_hash()
 
-    return compose_yaml, env_content, app_ir.ir_hash, compose_hash
+    return compose_yaml, env_content, app_ir.ir_hash, compose_hash, app_ir
 
 
 async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> None:
     hooks = app.get("hook_definitions", {})
     slug = app["slug"]
 
+    app_ir = None
     if _is_passthrough(app):
         await _add_step(job_id, "render_compose", "running",
                         "Rendering docker-compose.yml (legacy passthrough)")
@@ -279,7 +335,7 @@ async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> No
     else:
         await _add_step(job_id, "compile_ir", "running",
                         "Compiling application IR from template")
-        compose_yaml, env_content, ir_hash, compose_hash = await _compile_and_render(
+        compose_yaml, env_content, ir_hash, compose_hash, app_ir = await _compile_and_render(
             job_id, app_id, app
         )
         rendered = compose_yaml
@@ -302,6 +358,19 @@ async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> No
 
         await _add_step(job_id, "write_compose", "success",
                         f"Written: {compose_path}\nWritten: {env_path}", finished_at=_now())
+
+        if app_ir is not None:
+            puid, pgid = _extract_puid_pgid(app_ir)
+            if puid and pgid:
+                await _add_step(job_id, "chown_dirs", "running",
+                                f"Preparing mount ownership (PUID={puid} PGID={pgid})")
+                loop = asyncio.get_event_loop()
+                log_lines = await loop.run_in_executor(
+                    None, lambda: _prepare_mount_ownership(app_ir, puid, pgid)
+                )
+                await _add_step(job_id, "chown_dirs", "success",
+                                "\n".join(log_lines) or "No mounts required ownership changes",
+                                finished_at=_now())
 
     await _run_hooks(job_id, hooks, "pre_install", dry_run)
 
@@ -352,7 +421,7 @@ async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
         if not dry_run:
             await _add_step(job_id, "compile_ir", "running",
                             "Re-compiling application IR")
-            compose_yaml, env_content, ir_hash, compose_hash = await _compile_and_render(
+            compose_yaml, env_content, ir_hash, compose_hash, app_ir = await _compile_and_render(
                 job_id, app_id, app
             )
             await _add_step(job_id, "compile_ir", "success",
@@ -371,6 +440,18 @@ async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
                 await db.commit()
             await _add_step(job_id, "write_compose", "success",
                             f"Written: {compose_path}", finished_at=_now())
+
+            puid, pgid = _extract_puid_pgid(app_ir)
+            if puid and pgid:
+                await _add_step(job_id, "chown_dirs", "running",
+                                f"Preparing mount ownership (PUID={puid} PGID={pgid})")
+                loop = asyncio.get_event_loop()
+                log_lines = await loop.run_in_executor(
+                    None, lambda: _prepare_mount_ownership(app_ir, puid, pgid)
+                )
+                await _add_step(job_id, "chown_dirs", "success",
+                                "\n".join(log_lines) or "No mounts required ownership changes",
+                                finished_at=_now())
 
     if not dry_run:
         await _add_step(job_id, "docker_pull", "running", "Pulling latest images")
