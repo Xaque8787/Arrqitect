@@ -663,6 +663,17 @@ async def _run_remove(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
                         "Collecting image IDs for this app")
         img_result = await _docker_compose(compose_path, ["images", "-q"])
         image_ids = [line.strip() for line in img_result.stdout.splitlines() if line.strip()]
+
+        # Fallback: if no containers exist (manually removed), resolve image refs
+        # directly from the compose file via docker inspect on the image tag.
+        if not image_ids:
+            image_refs = _parse_image_refs_from_compose(compose_path)
+            if image_refs:
+                loop = asyncio.get_event_loop()
+                image_ids = await loop.run_in_executor(
+                    None, lambda: _resolve_image_ids(image_refs)
+                )
+
         await _add_step(job_id, "collect_images", StepStatus.SUCCESS.value,
                         f"Found {len(image_ids)} image(s): {', '.join(image_ids) or 'none'}",
                         finished_at=_now())
@@ -726,3 +737,40 @@ async def _docker_rmi(image_ids: list[str]) -> subprocess.CompletedProcess:
         None,
         lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=60),
     )
+
+
+def _parse_image_refs_from_compose(compose_path: str) -> list[str]:
+    """
+    Extract image references from a compose file by reading lines that start with 'image:'.
+    Used as a fallback when containers have already been manually removed.
+    """
+    try:
+        text = Path(compose_path).read_text()
+    except OSError:
+        return []
+    refs = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("image:"):
+            ref = stripped[len("image:"):].strip().strip('"').strip("'")
+            if ref:
+                refs.append(ref)
+    return refs
+
+
+def _resolve_image_ids(image_refs: list[str]) -> list[str]:
+    """
+    Resolve image references (e.g. 'lscr.io/linuxserver/radarr:latest') to image IDs
+    via docker inspect. Only returns IDs for images that are actually present locally.
+    """
+    ids = []
+    for ref in image_refs:
+        result = subprocess.run(
+            ["docker", "inspect", "--format", "{{.Id}}", ref],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            image_id = result.stdout.strip()
+            if image_id:
+                ids.append(image_id)
+    return ids
