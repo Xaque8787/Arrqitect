@@ -203,6 +203,25 @@ async def _load_installed_providers() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def _load_installed_consumers(provider_app_id: str) -> list[dict]:
+    """
+    Load all installed apps that consume any capability from this provider,
+    for provider-side network inference.
+    """
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT a.id, a.slug, v.consumes
+            FROM installed_apps a
+            LEFT JOIN template_versions v ON v.id = a.template_version_id
+            WHERE a.id != ?
+              AND a.state IN ('running', 'stopped')
+              AND v.consumes IS NOT NULL
+              AND v.consumes != '[]'
+        """, (provider_app_id,)) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
 async def _run_job(job_id: str, app_id: str, job_type: str, dry_run: bool) -> None:
     await _set_job_status(job_id, JobStatus.RUNNING.value)
     has_degraded = False
@@ -316,6 +335,16 @@ async def _compile_and_render(job_id: str, app_id: str, app: dict) -> tuple[str,
     registry_entries = await _load_registry_entries(app_id, consumes_raw)
     installed_providers = await _load_installed_providers()
 
+    # For provider apps, also load consumers so provider-side networks are inferred
+    provides_raw = app.get("provides", [])
+    if isinstance(provides_raw, str):
+        try:
+            import json as _json
+            provides_raw = _json.loads(provides_raw)
+        except Exception:
+            provides_raw = []
+    installed_consumers = await _load_installed_consumers(app_id) if provides_raw else None
+
     app_ir = compile_app(
         template=template_model,
         user_config=app.get("config", {}),
@@ -323,6 +352,7 @@ async def _compile_and_render(job_id: str, app_id: str, app: dict) -> tuple[str,
         registry_entries=registry_entries,
         installed_providers=installed_providers,
         app_slug=app["slug"],
+        installed_consumers=installed_consumers,
     )
 
     renderer = ComposeRenderer(app_ir)

@@ -154,6 +154,8 @@ class ComposeRenderer:
         return [f"{e.name}={e.value}" for e in sorted_vars]
 
     def _emit_network(self, network: NetworkIR) -> dict[str, Any]:
+        if network.scope == "external":
+            return {"external": True}
         return {"driver": "bridge"}
 
 

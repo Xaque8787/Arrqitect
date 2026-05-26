@@ -55,7 +55,7 @@ provides: []
 consumes:
   - key: prowlarr.api_key
     required: false
-    connectivity: false
+    connectivity: true
 
 config_schema:
   - id: web_ui_port

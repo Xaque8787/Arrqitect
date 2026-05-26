@@ -5,14 +5,21 @@ Derives the set of platform networks an app participates in,
 based on its provides/consumes declarations and the connectivity flag.
 
 Rules:
-  - A consumes entry with connectivity: true AND a matched installed provider
-    causes a capability-shared network to be created between them.
-  - A consumes entry with connectivity: false has no networking implication
-    — it is a registry lookup only.
-  - No default platform network. Networks are earned, not assumed.
+  Consumer side:
+    A consumes entry with connectivity: true AND a matched installed provider
+    causes the consumer to JOIN the shared network (scope=external).
+
+  Provider side:
+    When any installed consumer declares connectivity: true against one of this
+    app's provided keys, the provider OWNS the network (scope=capability-shared).
+    The provider's compose declares the network with driver: bridge.
+
+  No default platform network. Networks are earned, not assumed.
 """
 
 from __future__ import annotations
+
+import json
 
 from app.models.template import TemplateModel
 from app.models.ir import NetworkIR, NetworkMembershipIR
@@ -21,15 +28,20 @@ from app.models.ir import NetworkIR, NetworkMembershipIR
 def infer_networks(
     template: TemplateModel,
     installed_providers: list[dict],
+    installed_consumers: list[dict] | None = None,
 ) -> tuple[dict[str, NetworkIR], list[NetworkMembershipIR]]:
     """
     Returns:
       networks: dict of network_id -> NetworkIR (all networks this app participates in)
       memberships: list of NetworkMembershipIR for the primary service
+
+    installed_consumers is only passed when compiling a provider app.
+    Each entry must have a 'consumes' field (JSON list of consume declarations).
     """
     networks: dict[str, NetworkIR] = {}
     membership_ids: list[str] = []
 
+    # --- Consumer side: join networks for providers this app depends on ---
     for consumed in template.consumes:
         if not consumed.connectivity:
             continue
@@ -38,12 +50,34 @@ def infer_networks(
         if provider is None:
             continue
 
-        net_id = f"arrqitect_{consumed.key.replace('.', '_').replace('-', '_')}"
+        net_id = _network_id_for_key(consumed.key)
         networks[net_id] = NetworkIR(
             id=net_id,
-            scope="capability-shared",
+            scope="external",
         )
         membership_ids.append(net_id)
+
+    # --- Provider side: own networks when consumers need connectivity ---
+    if installed_consumers and template.provides:
+        provided_keys = {p.key for p in template.provides}
+
+        for consumer in installed_consumers:
+            consumer_consumes = _parse_consumes(consumer.get("consumes", []))
+            for c in consumer_consumes:
+                if not c.get("connectivity"):
+                    continue
+                key = c.get("key", "")
+                if key not in provided_keys:
+                    continue
+
+                net_id = _network_id_for_key(key)
+                if net_id not in networks:
+                    networks[net_id] = NetworkIR(
+                        id=net_id,
+                        scope="capability-shared",
+                    )
+                if net_id not in membership_ids:
+                    membership_ids.append(net_id)
 
     memberships = [
         NetworkMembershipIR(network_id=net_id)
@@ -53,11 +87,14 @@ def infer_networks(
     return networks, memberships
 
 
+def _network_id_for_key(capability_key: str) -> str:
+    return f"arrqitect_{capability_key.replace('.', '_').replace('-', '_')}"
+
+
 def _find_provider(capability_key: str, installed_providers: list[dict]) -> dict | None:
     for provider in installed_providers:
         provides = provider.get("provides", [])
         if isinstance(provides, str):
-            import json
             try:
                 provides = json.loads(provides)
             except Exception:
@@ -67,3 +104,12 @@ def _find_provider(capability_key: str, installed_providers: list[dict]) -> dict
             if key == capability_key:
                 return provider
     return None
+
+
+def _parse_consumes(consumes_raw) -> list[dict]:
+    if isinstance(consumes_raw, str):
+        try:
+            return json.loads(consumes_raw)
+        except Exception:
+            return []
+    return consumes_raw or []

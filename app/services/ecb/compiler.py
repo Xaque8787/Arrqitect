@@ -31,6 +31,7 @@ def compile_app(
     registry_entries: list[dict],
     installed_providers: list[dict],
     app_slug: str,
+    installed_consumers: list[dict] | None = None,
 ) -> AppIR:
     """
     Compile a TemplateModel into a fully resolved AppIR.
@@ -40,7 +41,7 @@ def compile_app(
     """
     compose_base = get_compose_base()
     resolved_config = resolve_config(template, user_config)
-    networks, memberships = infer_networks(template, installed_providers)
+    networks, memberships = infer_networks(template, installed_providers, installed_consumers)
 
     services: list[ServiceIR] = []
 

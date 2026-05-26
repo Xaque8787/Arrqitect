@@ -5,6 +5,8 @@ app:
   name: Prowlarr
   version: "1.0.0"
   flavor: linuxserver
+  allow_custom_env: true
+  allow_custom_storage: true
 
 description: Indexer manager and proxy for Radarr, Sonarr and other *arr apps.
 icon_url: https://raw.githubusercontent.com/Prowlarr/Prowlarr/develop/Logo/256.png
