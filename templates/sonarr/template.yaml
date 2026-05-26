@@ -56,6 +56,9 @@ consumes:
   - key: prowlarr.api_key
     required: false
     connectivity: true
+  - key: prowlarr.url_internal
+    required: false
+    connectivity: false
 
 config_schema:
   - id: web_ui_port

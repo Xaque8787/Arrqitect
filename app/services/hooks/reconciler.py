@@ -169,9 +169,9 @@ async def run_reconcile_job(
     if completed_ok:
         await mark_event_processed(event_id)
 
-        # For capability_published events, recompile and redeploy the consumer
-        # so it joins any newly-created shared networks.
-        if event_type == "capability_published":
+        # After any capability event, recompile and redeploy the consumer so it
+        # joins (or leaves) shared networks that the provider may have created/removed.
+        if event_type in ("capability_published", "capability_changed"):
             from app.services.job_runner import enqueue_job
             import asyncio as _asyncio
             _asyncio.create_task(enqueue_job(consumer_app_id, "update"))

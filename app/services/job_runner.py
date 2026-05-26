@@ -712,6 +712,16 @@ async def _run_remove(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
         is_reconcile=False,
     )
 
+    # Collect providers before deleting — we'll trigger their recompile after
+    # the record is gone so they see zero consumers and drop shared networks.
+    consumes_raw = app.get("consumes", [])
+    if isinstance(consumes_raw, str):
+        try:
+            consumes_raw = json.loads(consumes_raw)
+        except Exception:
+            consumes_raw = []
+    providers_to_update = await _find_connectivity_providers(app_id, consumes_raw)
+
     await _add_step(job_id, "cleanup_db", "running",
                     "Removing app record from database")
     async with get_db() as db:
@@ -719,6 +729,11 @@ async def _run_remove(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
         await db.commit()
     await _add_step(job_id, "cleanup_db", StepStatus.SUCCESS.value,
                     "App record removed", finished_at=_now())
+
+    # Now that the consumer record is gone, recompile providers so they
+    # drop any shared networks no longer needed by remaining consumers.
+    for provider in providers_to_update:
+        await enqueue_job(provider["id"], "update")
 
 
 async def _docker_compose(compose_path: str, args: list[str]) -> subprocess.CompletedProcess:
