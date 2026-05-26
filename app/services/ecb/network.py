@@ -7,7 +7,9 @@ based on its provides/consumes declarations and the connectivity flag.
 Rules:
   Consumer side:
     A consumes entry with connectivity: true AND a matched installed provider
-    causes the consumer to JOIN the shared network (scope=external).
+    AND the Docker network already exists causes the consumer to JOIN the
+    shared network (scope=external). If the network doesn't exist yet, the
+    consumer skips it — the provider update + reconcile cycle will wire it up.
 
   Provider side:
     When any installed consumer declares connectivity: true against one of this
@@ -20,6 +22,7 @@ Rules:
 from __future__ import annotations
 
 import json
+import subprocess
 
 from app.models.template import TemplateModel
 from app.models.ir import NetworkIR, NetworkMembershipIR
@@ -51,6 +54,13 @@ def infer_networks(
             continue
 
         net_id = _network_id_for_key(consumed.key)
+
+        # Only join if the Docker network already exists — if the provider
+        # hasn't created it yet, skip here and let the reconcile after the
+        # provider update wire this consumer in.
+        if not _docker_network_exists(net_id):
+            continue
+
         networks[net_id] = NetworkIR(
             id=net_id,
             scope="external",
@@ -104,6 +114,18 @@ def _find_provider(capability_key: str, installed_providers: list[dict]) -> dict
             if key == capability_key:
                 return provider
     return None
+
+
+def _docker_network_exists(network_name: str) -> bool:
+    """Check whether a Docker network exists on the host."""
+    try:
+        result = subprocess.run(
+            ["docker", "network", "inspect", network_name],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
 
 
 def _parse_consumes(consumes_raw) -> list[dict]:
