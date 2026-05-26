@@ -53,7 +53,7 @@ def infer_networks(
         if provider is None:
             continue
 
-        net_id = _network_id_for_key(consumed.key)
+        net_id = _network_id_for_provider(provider["slug"])
 
         # Only join if the Docker network already exists — if the provider
         # hasn't created it yet, skip here and let the reconcile after the
@@ -70,6 +70,7 @@ def infer_networks(
     # --- Provider side: own networks when consumers need connectivity ---
     if installed_consumers and template.provides:
         provided_keys = {p.key for p in template.provides}
+        provider_slug = template.app.id
 
         for consumer in installed_consumers:
             consumer_consumes = _parse_consumes(consumer.get("consumes", []))
@@ -80,7 +81,7 @@ def infer_networks(
                 if key not in provided_keys:
                     continue
 
-                net_id = _network_id_for_key(key)
+                net_id = _network_id_for_provider(provider_slug)
                 if net_id not in networks:
                     networks[net_id] = NetworkIR(
                         id=net_id,
@@ -97,8 +98,8 @@ def infer_networks(
     return networks, memberships
 
 
-def _network_id_for_key(capability_key: str) -> str:
-    return f"arrqitect_{capability_key.replace('.', '_').replace('-', '_')}"
+def _network_id_for_provider(provider_slug: str) -> str:
+    return f"arrqitect_{provider_slug.replace('-', '_')}"
 
 
 def _find_provider(capability_key: str, installed_providers: list[dict]) -> dict | None:
