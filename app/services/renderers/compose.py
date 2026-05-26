@@ -155,8 +155,10 @@ class ComposeRenderer:
 
     def _emit_network(self, network: NetworkIR) -> dict[str, Any]:
         if network.scope == "external":
-            return {"external": True}
-        return {"driver": "bridge"}
+            # `name` pins the exact Docker network name, bypassing compose project-prefix.
+            return {"external": True, "name": network.id}
+        # `name` pins the owned network name so consumers can reference it exactly.
+        return {"driver": "bridge", "name": network.id}
 
 
 # --- Canonical YAML serializer ---

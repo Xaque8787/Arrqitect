@@ -168,6 +168,14 @@ async def run_reconcile_job(
     # Step 4: mark event processed (or failed if hook failed)
     if completed_ok:
         await mark_event_processed(event_id)
+
+        # For capability_published events, recompile and redeploy the consumer
+        # so it joins any newly-created shared networks.
+        if event_type == "capability_published":
+            from app.services.job_runner import enqueue_job
+            import asyncio as _asyncio
+            _asyncio.create_task(enqueue_job(consumer_app_id, "update"))
+
         return JobStatus.DEGRADED if has_degraded else JobStatus.SUCCESS
     else:
         await mark_event_failed(event_id)
