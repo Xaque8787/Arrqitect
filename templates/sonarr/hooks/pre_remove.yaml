@@ -1,2 +1,10 @@
-description: Deregister Sonarr from Prowlarr before removal
-steps: []
+description: >
+  Clean up before Sonarr is removed.
+  Sonarr provides no capabilities, so there is nothing
+  to deregister. No-op placeholder.
+
+steps:
+  - id: log_removing
+    type: log
+    message: "Sonarr pre-remove: no capability cleanup required"
+    timeout_seconds: 5

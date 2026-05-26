@@ -99,8 +99,13 @@
 .badge-removing { background: var(--color-warning-dim); color: var(--color-warning); }
 .badge-error { background: var(--color-error-dim); color: var(--color-error); }
 .badge-success { background: var(--color-success-dim); color: var(--color-success); }
+.badge-degraded { background: var(--color-warning-dim); color: var(--color-warning); }
 .badge-failed { background: var(--color-error-dim); color: var(--color-error); }
 .badge-pending { background: var(--color-surface-3); color: var(--color-text-dim); }
+.badge-continue_success { background: var(--color-warning-dim); color: var(--color-warning); }
+.badge-timeout { background: var(--color-error-dim); color: var(--color-error); }
+.badge-skipped { background: var(--color-surface-3); color: var(--color-text-dim); }
+.badge-obsolete { background: var(--color-surface-3); color: var(--color-text-dim); }
 
 /* Form */
 .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px; }
@@ -172,6 +177,7 @@
 .app-card-footer { display: flex; align-items: center; justify-content: space-between; }
 .app-card-tags { display: flex; gap: 4px; flex-wrap: wrap; }
 .tag { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; background: var(--color-surface-3); color: var(--color-text-dim); border: 1px solid var(--color-border); }
+.tag-warn { background: var(--color-warning-dim); color: var(--color-warning); border-color: var(--color-warning-dim); }
 
 /* Job log */
 .job-log {
@@ -210,8 +216,10 @@
   border-left: 3px solid var(--color-border);
 }
 .step-item.success { border-left-color: var(--color-success); }
+.step-item.degraded { border-left-color: var(--color-warning); }
 .step-item.failed { border-left-color: var(--color-error); }
 .step-item.running { border-left-color: var(--color-warning); }
+.step-item.skipped { border-left-color: var(--color-surface-3); opacity: 0.7; }
 .step-name { font-size: 13px; font-weight: 500; color: var(--color-text); min-width: 140px; }
 .step-log { font-size: 12px; color: var(--color-text-muted); font-family: ui-monospace, monospace; word-break: break-all; }
 

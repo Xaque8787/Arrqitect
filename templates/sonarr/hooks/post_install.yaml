@@ -1,2 +1,34 @@
-description: Add Prowlarr as indexer in Sonarr after install
-steps: []
+description: >
+  Read Prowlarr capabilities after Sonarr installs.
+  Mirrors the Radarr post_install hook pattern exactly.
+
+steps:
+  - id: read_prowlarr_api_key
+    type: registry_read
+    key: prowlarr.api_key
+    bind_as: prowlarr_api_key
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    description: >
+      Read Prowlarr's API key. If Prowlarr is not yet installed,
+      returns CONTINUE_SUCCESS (job = DEGRADED). Reconcile fires
+      when Prowlarr publishes.
+
+  - id: read_prowlarr_url
+    type: registry_read
+    key: prowlarr.url_internal
+    bind_as: prowlarr_url
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    depends_on:
+      - read_prowlarr_api_key
+    description: Read Prowlarr's internal URL.
+
+  - id: log_prowlarr_status
+    type: log
+    message: "Sonarr post-install: Prowlarr capability read complete"
+    depends_on:
+      - read_prowlarr_url
+    timeout_seconds: 5

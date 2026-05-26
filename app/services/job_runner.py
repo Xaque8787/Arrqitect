@@ -11,6 +11,8 @@ Install pipeline (schema_version 2):
   6. Store compose_hash on installed_apps
   7. Write files to disk
   8. Run docker compose up -d
+  9. Execute post_install hook (real hook executor)
+ 10. Publish capabilities, fire events for consumers
 
 Install pipeline (schema_version 1 passthrough):
   Legacy Jinja2 render path. Explicitly isolated.
@@ -26,11 +28,14 @@ from pathlib import Path
 from typing import Callable, Awaitable
 
 from app.db.client import get_db
+from app.models.enums import JobStatus, StepStatus
 from app.models.ir import AppIR
 from app.services.ecb import compile_app
 from app.services.ecb.parser import parse_template, PassthroughTemplate
 from app.services.ecb.resolver import get_compose_base
 from app.services.renderers.compose import ComposeRenderer
+from app.services.hooks.executor import HookContext, execute_hook
+from app.services.hooks.reconciler import trigger_reconcile_for_consumers
 
 # Legacy render functions — used only for schema_version 1 passthrough apps
 from app.services.ecb_legacy import (
@@ -85,8 +90,8 @@ async def enqueue_job(installed_app_id: str, job_type: str, dry_run: bool = Fals
             return {"id": existing[0], "type": job_type, "status": "pending", "dry_run": dry_run, "deduplicated": True}
 
         await db.execute("""
-            INSERT INTO jobs (id, installed_app_id, type, status, dry_run)
-            VALUES (?, ?, ?, 'pending', ?)
+            INSERT INTO jobs (id, installed_app_id, type, status, dry_run, is_reconcile)
+            VALUES (?, ?, ?, 'pending', ?, 0)
         """, (job_id, installed_app_id, job_type, 1 if dry_run else 0))
         await db.commit()
 
@@ -199,36 +204,30 @@ async def _load_installed_providers() -> list[dict]:
 
 
 async def _run_job(job_id: str, app_id: str, job_type: str, dry_run: bool) -> None:
-    await _set_job_status(job_id, "running")
+    await _set_job_status(job_id, JobStatus.RUNNING.value)
+    has_degraded = False
     try:
         app = await _load_app(app_id)
         if not app:
             raise RuntimeError(f"App {app_id} not found")
 
         if job_type == "install":
-            await _run_install(job_id, app_id, app, dry_run)
+            has_degraded = await _run_install(job_id, app_id, app, dry_run)
         elif job_type == "update":
-            await _run_update(job_id, app_id, app, dry_run)
+            has_degraded = await _run_update(job_id, app_id, app, dry_run)
         elif job_type == "remove":
             await _run_remove(job_id, app_id, app, dry_run)
         else:
-            await _add_step(job_id, job_type, "skipped",
+            await _add_step(job_id, job_type, StepStatus.SKIPPED.value,
                             f"Job type '{job_type}' not implemented", finished_at=_now())
 
-        await _set_job_status(job_id, "success")
+        final_status = JobStatus.DEGRADED if has_degraded else JobStatus.SUCCESS
+        await _set_job_status(job_id, final_status.value)
 
     except Exception as exc:
-        await _add_step(job_id, "error", "failed", str(exc), finished_at=_now())
-        await _set_job_status(job_id, "failed")
+        await _add_step(job_id, "error", StepStatus.FAILED.value, str(exc), finished_at=_now())
+        await _set_job_status(job_id, JobStatus.FAILED.value)
         await _set_app_state(app_id, "error")
-
-
-async def _run_hooks(job_id: str, hooks: dict, event: str, dry_run: bool) -> None:
-    if event not in hooks:
-        return
-    await _add_step(job_id, f"hook:{event}", "success",
-                    f"[placeholder] hook '{event}' — declarative hook execution not yet implemented",
-                    finished_at=_now())
 
 
 def _is_passthrough(app: dict) -> bool:
@@ -236,11 +235,6 @@ def _is_passthrough(app: dict) -> bool:
 
 
 def _extract_puid_pgid(app_ir: AppIR) -> tuple[str, str] | tuple[None, None]:
-    """
-    Scan resolved EnvVarIR entries for PUID and PGID.
-    Returns (puid, pgid) as numeric strings, or (None, None) if either is absent
-    or non-numeric (guards against accidental variable substitution).
-    """
     for svc in app_ir.services:
         env_by_name = {e.name: e.value for e in svc.env_vars}
         puid = env_by_name.get("PUID")
@@ -251,10 +245,6 @@ def _extract_puid_pgid(app_ir: AppIR) -> tuple[str, str] | tuple[None, None]:
 
 
 def _to_container_path(host_path: str, compose_base: str) -> str | None:
-    """
-    Translate a host-side path to its container-side equivalent.
-    Returns None if the path is outside the mounted compose directory.
-    """
     try:
         rel = Path(host_path).relative_to(compose_base)
         return str(Path(CONTAINER_COMPOSE_DIR) / rel)
@@ -263,15 +253,6 @@ def _to_container_path(host_path: str, compose_base: str) -> str | None:
 
 
 def _prepare_mount_ownership(app_ir: AppIR, puid: str, pgid: str, compose_base: str) -> list[str]:
-    """
-    Return log lines describing what was done.
-    For each persistent, read-write mount:
-      - Path outside the arrqitect compose mount: skip. Docker will create it
-        as root if needed — expected behavior for user-managed external paths.
-      - Directory already exists (container-side check): skip entirely.
-      - Directory is new: mkdir -p + chown -R via the container-side path.
-      - mkdir fails: warn and continue.
-    """
     log_lines: list[str] = []
 
     for svc in app_ir.services:
@@ -316,10 +297,6 @@ def _prepare_mount_ownership(app_ir: AppIR, puid: str, pgid: str, compose_base: 
 
 
 async def _compile_and_render(job_id: str, app_id: str, app: dict) -> tuple[str, str, str, str, AppIR]:
-    """
-    Run the ECB + renderer pipeline for schema_version 2 apps.
-    Returns (compose_yaml, env_content, ir_hash, compose_hash, app_ir).
-    """
     service_definitions = app.get("service_definitions", "")
     if not service_definitions:
         raise RuntimeError("No service_definitions found — template may not have been synced as schema_version 2")
@@ -355,9 +332,60 @@ async def _compile_and_render(job_id: str, app_id: str, app: dict) -> tuple[str,
     return compose_yaml, env_content, app_ir.ir_hash, compose_hash, app_ir
 
 
-async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> None:
+def _resolve_hook_path(app_slug: str, hook_defs: dict, hook_name: str) -> str | None:
+    """Resolve the filesystem path to a hook YAML file."""
+    relative = hook_defs.get(hook_name)
+    if not relative:
+        return None
+    templates_base = Path(__file__).parent.parent.parent / "templates" / app_slug
+    return str(templates_base / relative)
+
+
+async def _run_hook(
+    job_id: str,
+    app_id: str,
+    app_slug: str,
+    hook_defs: dict,
+    hook_name: str,
+    is_reconcile: bool = False,
+    event_type: str = "",
+    provider_slug: str = "",
+) -> bool:
+    """
+    Run a named hook. Returns True if any step reached CONTINUE_SUCCESS (degraded).
+    Records nothing and returns False cleanly if hook file is missing.
+    """
+    hook_path = _resolve_hook_path(app_slug, hook_defs, hook_name)
+    if not hook_path:
+        return False
+
+    ctx = HookContext(
+        app_id=app_id,
+        app_slug=app_slug,
+        hook_name=hook_name,
+        hook_yaml_path=hook_path,
+        template_slug=app_slug,
+        is_reconcile=is_reconcile,
+        event_type=event_type,
+        provider_slug=provider_slug,
+        job_id=job_id,
+    )
+
+    _completed_ok, has_degraded = await execute_hook(
+        ctx,
+        broadcast=lambda jid, msg: _broadcast(jid, msg),
+    )
+
+    if not _completed_ok:
+        raise RuntimeError(f"Hook '{hook_name}' failed for {app_slug}")
+
+    return has_degraded
+
+
+async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> bool:
     hooks = app.get("hook_definitions", {})
     slug = app["slug"]
+    has_degraded = False
 
     app_ir = None
     if _is_passthrough(app):
@@ -369,7 +397,7 @@ async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> No
         env_content = _legacy_build_env(config, schema, slug)
         ir_hash = ""
         compose_hash = ""
-        await _add_step(job_id, "render_compose", "success",
+        await _add_step(job_id, "render_compose", StepStatus.SUCCESS.value,
                         "Compose file rendered (passthrough)", finished_at=_now())
     else:
         await _add_step(job_id, "compile_ir", "running",
@@ -378,7 +406,7 @@ async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> No
             job_id, app_id, app
         )
         rendered = compose_yaml
-        await _add_step(job_id, "compile_ir", "success",
+        await _add_step(job_id, "compile_ir", StepStatus.SUCCESS.value,
                         f"IR compiled (hash: {ir_hash[:12]}...)", finished_at=_now())
 
     if not dry_run:
@@ -395,7 +423,7 @@ async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> No
             )
             await db.commit()
 
-        await _add_step(job_id, "write_compose", "success",
+        await _add_step(job_id, "write_compose", StepStatus.SUCCESS.value,
                         f"Written: {compose_path}\nWritten: {env_path}", finished_at=_now())
 
         if app_ir is not None:
@@ -408,31 +436,42 @@ async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> No
                 log_lines = await loop.run_in_executor(
                     None, lambda: _prepare_mount_ownership(app_ir, puid, pgid, compose_base)
                 )
-                await _add_step(job_id, "chown_dirs", "success",
+                await _add_step(job_id, "chown_dirs", StepStatus.SUCCESS.value,
                                 "\n".join(log_lines) or "No mounts required ownership changes",
                                 finished_at=_now())
-
-    await _run_hooks(job_id, hooks, "pre_install", dry_run)
 
     if not dry_run:
         await _add_step(job_id, "docker_up", "running", "Running docker compose up -d")
         result = await _docker_compose(compose_path, ["up", "-d"])
-        status = "success" if result.returncode == 0 else "failed"
+        status = StepStatus.SUCCESS.value if result.returncode == 0 else StepStatus.FAILED.value
         await _add_step(job_id, "docker_up", status,
                         result.stdout + result.stderr, finished_at=_now())
         if result.returncode != 0:
             raise RuntimeError("docker compose up failed")
 
-    await _run_hooks(job_id, hooks, "post_install", dry_run)
+    # Run post_install hook
+    if hooks.get("post_install"):
+        hook_degraded = await _run_hook(job_id, app_id, slug, hooks, "post_install")
+        has_degraded = has_degraded or hook_degraded
+
+        # After hook, trigger capability events for consumers
+        # (the hook may have written capabilities via registry_write steps)
+        await trigger_reconcile_for_consumers(
+            provider_app_id=app_id,
+            event_type="capability_published",
+            payload={"provider_slug": slug},
+            is_reconcile=False,
+        )
+
     await _set_app_state(app_id, "running" if not dry_run else "stopped")
+    return has_degraded
 
 
-async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> None:
+async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> bool:
     hooks = app.get("hook_definitions", {})
     slug = app["slug"]
     compose_path = app.get("compose_path", "")
-
-    await _run_hooks(job_id, hooks, "pre_update", dry_run)
+    has_degraded = False
 
     if _is_passthrough(app):
         config = app.get("config", {})
@@ -443,7 +482,7 @@ async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
             await _add_step(job_id, "render_compose", "running",
                             "Re-rendering docker-compose.yml (legacy passthrough)")
             rendered = _legacy_render_compose(app["compose_template"], config, schema, slug)
-            await _add_step(job_id, "render_compose", "success",
+            await _add_step(job_id, "render_compose", StepStatus.SUCCESS.value,
                             "Compose file rendered", finished_at=_now())
 
             await _add_step(job_id, "write_compose", "running",
@@ -455,7 +494,7 @@ async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
                     (compose_path, app_id),
                 )
                 await db.commit()
-            await _add_step(job_id, "write_compose", "success",
+            await _add_step(job_id, "write_compose", StepStatus.SUCCESS.value,
                             f"Written: {compose_path}", finished_at=_now())
     else:
         if not dry_run:
@@ -464,7 +503,7 @@ async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
             compose_yaml, env_content, ir_hash, compose_hash, app_ir = await _compile_and_render(
                 job_id, app_id, app
             )
-            await _add_step(job_id, "compile_ir", "success",
+            await _add_step(job_id, "compile_ir", StepStatus.SUCCESS.value,
                             f"IR compiled (hash: {ir_hash[:12]}...)", finished_at=_now())
 
             await _add_step(job_id, "write_compose", "running",
@@ -478,7 +517,7 @@ async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
                     (compose_path, ir_hash, compose_hash, app_id),
                 )
                 await db.commit()
-            await _add_step(job_id, "write_compose", "success",
+            await _add_step(job_id, "write_compose", StepStatus.SUCCESS.value,
                             f"Written: {compose_path}", finished_at=_now())
 
             puid, pgid = _extract_puid_pgid(app_ir)
@@ -490,7 +529,7 @@ async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
                 log_lines = await loop.run_in_executor(
                     None, lambda: _prepare_mount_ownership(app_ir, puid, pgid, compose_base)
                 )
-                await _add_step(job_id, "chown_dirs", "success",
+                await _add_step(job_id, "chown_dirs", StepStatus.SUCCESS.value,
                                 "\n".join(log_lines) or "No mounts required ownership changes",
                                 finished_at=_now())
 
@@ -498,37 +537,56 @@ async def _run_update(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
         await _add_step(job_id, "docker_pull", "running", "Pulling latest images")
         result = await _docker_compose(compose_path, ["pull"])
         await _add_step(job_id, "docker_pull",
-                        "success" if result.returncode == 0 else "failed",
+                        StepStatus.SUCCESS.value if result.returncode == 0 else StepStatus.FAILED.value,
                         result.stdout + result.stderr, finished_at=_now())
 
         await _add_step(job_id, "docker_up", "running", "Running docker compose up -d")
         result = await _docker_compose(compose_path, ["up", "-d"])
-        status = "success" if result.returncode == 0 else "failed"
+        status = StepStatus.SUCCESS.value if result.returncode == 0 else StepStatus.FAILED.value
         await _add_step(job_id, "docker_up", status,
                         result.stdout + result.stderr, finished_at=_now())
         if result.returncode != 0:
             raise RuntimeError("docker compose up failed during update")
 
-    await _run_hooks(job_id, hooks, "post_update", dry_run)
+    # Run post_update hook (if defined), falling back to post_install for reconcile trigger
+    hook_name = "post_update" if hooks.get("post_update") else None
+    if hook_name:
+        hook_degraded = await _run_hook(job_id, app_id, slug, hooks, hook_name)
+        has_degraded = has_degraded or hook_degraded
+
+    # Fire capability_changed event for all consumers
+    await trigger_reconcile_for_consumers(
+        provider_app_id=app_id,
+        event_type="capability_changed",
+        payload={"provider_slug": slug},
+        is_reconcile=False,
+    )
+
     await _set_app_state(app_id, "running" if not dry_run else "stopped")
+    return has_degraded
 
 
 async def _run_remove(job_id: str, app_id: str, app: dict, dry_run: bool) -> None:
     compose_path = app.get("compose_path", "")
     slug = app.get("slug", "")
+    hooks = app.get("hook_definitions", {})
+
+    # Run pre_remove hook before tearing down
+    if hooks.get("pre_remove") and not dry_run:
+        await _run_hook(job_id, app_id, slug, hooks, "pre_remove")
 
     if not dry_run and compose_path and Path(compose_path).exists():
         await _add_step(job_id, "collect_images", "running",
                         "Collecting image IDs for this app")
         img_result = await _docker_compose(compose_path, ["images", "-q"])
         image_ids = [line.strip() for line in img_result.stdout.splitlines() if line.strip()]
-        await _add_step(job_id, "collect_images", "success",
+        await _add_step(job_id, "collect_images", StepStatus.SUCCESS.value,
                         f"Found {len(image_ids)} image(s): {', '.join(image_ids) or 'none'}",
                         finished_at=_now())
 
         await _add_step(job_id, "docker_down", "running", "Running docker compose down")
         result = await _docker_compose(compose_path, ["down"])
-        status = "success" if result.returncode == 0 else "failed"
+        status = StepStatus.SUCCESS.value if result.returncode == 0 else StepStatus.FAILED.value
         await _add_step(job_id, "docker_down", status,
                         result.stdout + result.stderr, finished_at=_now())
 
@@ -536,7 +594,7 @@ async def _run_remove(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
             await _add_step(job_id, "remove_images", "running",
                             f"Removing {len(image_ids)} image(s)")
             rmi_result = await _docker_rmi(image_ids)
-            rmi_status = "success" if rmi_result.returncode == 0 else "failed"
+            rmi_status = StepStatus.SUCCESS.value if rmi_result.returncode == 0 else StepStatus.FAILED.value
             await _add_step(job_id, "remove_images", rmi_status,
                             rmi_result.stdout + rmi_result.stderr, finished_at=_now())
 
@@ -546,17 +604,27 @@ async def _run_remove(job_id: str, app_id: str, app: dict, dry_run: bool) -> Non
                             f"Removing project directory: {app_dir}")
             try:
                 shutil.rmtree(app_dir)
-                await _add_step(job_id, "remove_files", "success",
+                await _add_step(job_id, "remove_files", StepStatus.SUCCESS.value,
                                 f"Removed: {app_dir}", finished_at=_now())
             except Exception as exc:
-                await _add_step(job_id, "remove_files", "failed", str(exc), finished_at=_now())
+                await _add_step(job_id, "remove_files", StepStatus.FAILED.value,
+                                str(exc), finished_at=_now())
+
+    # Fire provider_removed event for consumers before deleting app record
+    await trigger_reconcile_for_consumers(
+        provider_app_id=app_id,
+        event_type="provider_removed",
+        payload={"provider_slug": slug},
+        is_reconcile=False,
+    )
 
     await _add_step(job_id, "cleanup_db", "running",
                     "Removing app record from database")
     async with get_db() as db:
         await db.execute("DELETE FROM installed_apps WHERE id = ?", (app_id,))
         await db.commit()
-    await _add_step(job_id, "cleanup_db", "success", "App record removed", finished_at=_now())
+    await _add_step(job_id, "cleanup_db", StepStatus.SUCCESS.value,
+                    "App record removed", finished_at=_now())
 
 
 async def _docker_compose(compose_path: str, args: list[str]) -> subprocess.CompletedProcess:

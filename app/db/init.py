@@ -60,20 +60,25 @@ CREATE TABLE IF NOT EXISTS installed_apps (
     compose_path        TEXT NOT NULL DEFAULT '',
     ir_hash             TEXT NOT NULL DEFAULT '',
     compose_hash        TEXT NOT NULL DEFAULT '',
+    generation          INTEGER NOT NULL DEFAULT 1,
+    template_source     TEXT NOT NULL DEFAULT '',
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE TABLE IF NOT EXISTS app_registry (
-    id           TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-    provider_id  TEXT NOT NULL REFERENCES installed_apps(id) ON DELETE CASCADE,
-    key          TEXT NOT NULL,
-    value        TEXT NOT NULL DEFAULT '',
-    type         TEXT NOT NULL DEFAULT 'metadata'
-                     CHECK (type IN ('credential','endpoint','metadata','feature-flag')),
-    sensitive    INTEGER NOT NULL DEFAULT 0,
-    rotates      INTEGER NOT NULL DEFAULT 0,
-    published_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    id                       TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    provider_id              TEXT NOT NULL REFERENCES installed_apps(id) ON DELETE CASCADE,
+    key                      TEXT NOT NULL,
+    value                    TEXT NOT NULL DEFAULT '',
+    type                     TEXT NOT NULL DEFAULT 'metadata'
+                                 CHECK (type IN ('credential','endpoint','metadata','feature-flag')),
+    sensitive                INTEGER NOT NULL DEFAULT 0,
+    rotates                  INTEGER NOT NULL DEFAULT 0,
+    capability_version       INTEGER NOT NULL DEFAULT 1,
+    capability_schema_version TEXT NOT NULL DEFAULT '',
+    source_template_hash     TEXT NOT NULL DEFAULT '',
+    published_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE (provider_id, key)
 );
 
@@ -92,8 +97,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     type             TEXT NOT NULL
                          CHECK (type IN ('install','update','remove','reconcile','preview')),
     status           TEXT NOT NULL DEFAULT 'pending'
-                         CHECK (status IN ('pending','running','success','failed','cancelled')),
+                         CHECK (status IN ('pending','running','success','degraded','failed','cancelled','obsolete')),
     dry_run          INTEGER NOT NULL DEFAULT 0,
+    is_reconcile     INTEGER NOT NULL DEFAULT 0,
     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -103,7 +109,10 @@ CREATE TABLE IF NOT EXISTS job_steps (
     job_id      TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     step        TEXT NOT NULL DEFAULT '',
     status      TEXT NOT NULL DEFAULT 'pending'
-                    CHECK (status IN ('pending','running','success','failed','skipped')),
+                    CHECK (status IN (
+                        'pending','running','success','continue_success',
+                        'failed','timeout','skipped','obsolete'
+                    )),
     log         TEXT NOT NULL DEFAULT '',
     started_at  TEXT,
     finished_at TEXT
@@ -127,6 +136,38 @@ CREATE TABLE IF NOT EXISTS global_settings (
     value      TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+
+CREATE TABLE IF NOT EXISTS app_events (
+    id                TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    installed_app_id  TEXT NOT NULL REFERENCES installed_apps(id) ON DELETE CASCADE,
+    event_type        TEXT NOT NULL
+                          CHECK (event_type IN (
+                              'capability_changed',
+                              'capability_published',
+                              'provider_removed'
+                          )),
+    payload           TEXT NOT NULL DEFAULT '{}',
+    status            TEXT NOT NULL DEFAULT 'pending'
+                          CHECK (status IN ('pending', 'claimed', 'processed', 'failed_permanent')),
+    claimed_by_job_id TEXT,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    claimed_at        TEXT,
+    processed_at      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_events_app_status ON app_events (installed_app_id, status);
+CREATE INDEX IF NOT EXISTS idx_app_events_status     ON app_events (status);
+
+CREATE TABLE IF NOT EXISTS reconcile_state (
+    id                 TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    consumer_app_id    TEXT NOT NULL UNIQUE REFERENCES installed_apps(id) ON DELETE CASCADE,
+    last_reconciled_at TEXT,
+    last_seen_versions TEXT NOT NULL DEFAULT '{}',
+    created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_reconcile_state_consumer ON reconcile_state (consumer_app_id);
 """
 
 

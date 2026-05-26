@@ -1,2 +1,38 @@
-description: Add Prowlarr as indexer in Radarr after install
-steps: []
+description: >
+  Read Prowlarr capabilities after Radarr installs.
+  If Prowlarr is not yet installed, the read step uses
+  on_error: continue so the job completes as DEGRADED
+  rather than FAILED. When Prowlarr installs later,
+  a reconcile job will run this hook again.
+
+steps:
+  - id: read_prowlarr_api_key
+    type: registry_read
+    key: prowlarr.api_key
+    bind_as: prowlarr_api_key
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    description: >
+      Read Prowlarr's API key from the capability registry.
+      If Prowlarr is not yet installed, this returns CONTINUE_SUCCESS
+      and the job completes as DEGRADED. A reconcile will fire
+      when Prowlarr publishes its capabilities.
+
+  - id: read_prowlarr_url
+    type: registry_read
+    key: prowlarr.url_internal
+    bind_as: prowlarr_url
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    depends_on:
+      - read_prowlarr_api_key
+    description: Read Prowlarr's internal URL.
+
+  - id: log_prowlarr_status
+    type: log
+    message: "Radarr post-install: Prowlarr capability read complete"
+    depends_on:
+      - read_prowlarr_url
+    timeout_seconds: 5

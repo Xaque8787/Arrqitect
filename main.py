@@ -11,6 +11,7 @@ from app.db.init import init_db
 from app.db.runner import run_migrations
 from app.api import templates, apps, jobs, ws, settings
 from app.services.seeder import seed_templates
+from app.services.hooks.events import recovery_sweep
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 
@@ -20,6 +21,9 @@ async def lifespan(application: FastAPI):
     init_db()
     run_migrations()
     seed_templates()
+    recovered = await recovery_sweep()
+    if recovered:
+        print(f"[events] Recovery sweep: reset {recovered} stale claimed event(s) to pending")
     yield
 
 

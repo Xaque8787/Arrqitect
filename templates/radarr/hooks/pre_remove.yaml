@@ -1,2 +1,10 @@
-description: Deregister Radarr from Prowlarr before removal
-steps: []
+description: >
+  Clean up before Radarr is removed.
+  Radarr provides no capabilities, so there is nothing
+  to deregister. This hook is a no-op placeholder.
+
+steps:
+  - id: log_removing
+    type: log
+    message: "Radarr pre-remove: no capability cleanup required"
+    timeout_seconds: 5

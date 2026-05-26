@@ -97,8 +97,9 @@ export interface Job {
   id: string;
   installed_app_id: string | null;
   type: string;
-  status: "pending" | "running" | "success" | "failed" | "cancelled";
+  status: "pending" | "running" | "success" | "degraded" | "failed" | "cancelled" | "obsolete";
   dry_run: boolean;
+  is_reconcile: boolean;
   created_at: string;
   job_steps?: JobStep[];
 }
@@ -107,10 +108,16 @@ export interface JobStep {
   id: string;
   job_id: string;
   step: string;
-  status: "pending" | "running" | "success" | "failed" | "skipped";
+  status: "pending" | "running" | "success" | "continue_success" | "failed" | "timeout" | "skipped" | "obsolete";
   log: string;
   started_at: string | null;
   finished_at: string | null;
+}
+
+export interface ValidationResult {
+  severity: "error" | "warning" | "info";
+  step_id: string | null;
+  message: string;
 }
 
 export interface PreviewResult {

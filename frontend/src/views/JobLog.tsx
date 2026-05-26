@@ -6,8 +6,10 @@ import type { Job, JobStep } from "../api";
 
 function stepClass(status: string) {
   if (status === "success") return "success";
-  if (status === "failed") return "failed";
+  if (status === "continue_success") return "degraded";
+  if (status === "failed" || status === "timeout") return "failed";
   if (status === "running") return "running";
+  if (status === "skipped") return "skipped";
   return "";
 }
 
@@ -25,7 +27,7 @@ export default function JobLog() {
   useEffect(() => {
     if (!id) return;
 
-    const TERMINAL = new Set(["success", "failed", "cancelled"]);
+    const TERMINAL = new Set(["success", "degraded", "failed", "cancelled", "obsolete"]);
 
     const fetchSnapshot = () =>
       api.jobs.get(id).then(j => {
@@ -90,6 +92,7 @@ export default function JobLog() {
   if (!job) return <div style={{ padding: 32, color: "var(--color-text-muted)" }}>Job not found.</div>;
 
   const isActive = jobStatus === "pending" || jobStatus === "running";
+  const isDegraded = jobStatus === "degraded";
 
   return (
     <div>
@@ -104,6 +107,8 @@ export default function JobLog() {
           </div>
           <span className={`badge badge-${jobStatus}`}>{jobStatus}</span>
           {job.dry_run && <span className="tag">dry run</span>}
+          {job.is_reconcile && <span className="tag">reconcile</span>}
+          {isDegraded && <span className="tag tag-warn">degraded execution</span>}
           {isActive && <div className="spinner" style={{ width: 16, height: 16 }} />}
         </div>
       </div>
