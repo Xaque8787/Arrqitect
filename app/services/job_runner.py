@@ -203,6 +203,45 @@ async def _load_installed_providers() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def _find_connectivity_providers(consumer_app_id: str, consumes: list) -> list[dict]:
+    """
+    Return installed provider apps that this consumer has connectivity: true against.
+    Used to trigger provider recompiles so they create shared networks before the consumer joins.
+    """
+    connectivity_keys = {
+        c.get("key") for c in consumes
+        if isinstance(c, dict) and c.get("connectivity")
+    }
+    if not connectivity_keys:
+        return []
+
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT a.id, a.slug, v.provides
+            FROM installed_apps a
+            LEFT JOIN template_versions v ON v.id = a.template_version_id
+            WHERE a.id != ?
+              AND a.state IN ('running', 'stopped')
+              AND v.provides IS NOT NULL
+              AND v.provides != '[]'
+        """, (consumer_app_id,)) as cur:
+            rows = await cur.fetchall()
+
+    providers = []
+    for row in rows:
+        d = dict(row)
+        provides_raw = d.get("provides", [])
+        if isinstance(provides_raw, str):
+            try:
+                provides_raw = json.loads(provides_raw)
+            except Exception:
+                provides_raw = []
+        provided_keys = {p.get("key") for p in provides_raw if isinstance(p, dict)}
+        if provided_keys.intersection(connectivity_keys):
+            providers.append(d)
+    return providers
+
+
 async def _load_installed_consumers(provider_app_id: str) -> list[dict]:
     """
     Load all installed apps that consume any capability from this provider,
@@ -494,6 +533,20 @@ async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> bo
         )
 
     await _set_app_state(app_id, "running" if not dry_run else "stopped")
+
+    # Trigger update jobs on connected providers so they recompile and create
+    # shared Docker networks before this consumer tries to join them.
+    if not dry_run and not _is_passthrough(app):
+        consumes_raw = app.get("consumes", [])
+        if isinstance(consumes_raw, str):
+            try:
+                consumes_raw = json.loads(consumes_raw)
+            except Exception:
+                consumes_raw = []
+        providers = await _find_connectivity_providers(app_id, consumes_raw)
+        for provider in providers:
+            await enqueue_job(provider["id"], "update")
+
     return has_degraded
 
 
