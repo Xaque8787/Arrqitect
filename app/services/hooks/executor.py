@@ -421,6 +421,7 @@ async def _step_http_request(
 
     url = _render_template(url_template, exec_context)
     body = _render_template(body_template, exec_context) if body_template else None
+    headers = {k: _render_template(str(v), exec_context) for k, v in headers.items()}
 
     if not url:
         if step.on_error == "continue":
