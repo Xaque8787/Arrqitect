@@ -60,7 +60,7 @@ steps:
   - id: publish_self_url_external
     type: registry_write
     key: radarr.url_external
-    value_template: "localhost:{inputs.web_ui_port}"
+    value_template: "host.docker.internal:{inputs.web_ui_port}"
     on_error: fail
     critical: true
     timeout_seconds: 10
