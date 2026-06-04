@@ -137,7 +137,7 @@ steps:
     type: registry_write
     key: radarr.prowlarr_app_id
     value_template: "<<registry.radarr_prowlarr_app_id>>"
-    when: "registry.prowlarr_api_key != ''"
+    when: "registry.radarr_prowlarr_app_id != ''"
     on_error: continue
     critical: false
     timeout_seconds: 10

@@ -119,6 +119,7 @@ class ComposeRenderer:
         if net_ids:
             result["networks"] = net_ids
 
+        result["extra_hosts"] = ["host.docker.internal:host-gateway"]
         result["restart"] = _RESTART_MAP[svc.lifecycle.restart_behavior]
 
         return result

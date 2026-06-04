@@ -135,7 +135,7 @@ steps:
     type: registry_write
     key: sonarr.prowlarr_app_id
     value_template: "<<registry.sonarr_prowlarr_app_id>>"
-    when: "registry.prowlarr_api_key != ''"
+    when: "registry.sonarr_prowlarr_app_id != ''"
     on_error: continue
     critical: false
     timeout_seconds: 10

@@ -253,7 +253,7 @@ async def _load_installed_consumers(provider_app_id: str) -> list[dict]:
             FROM installed_apps a
             LEFT JOIN template_versions v ON v.id = a.template_version_id
             WHERE a.id != ?
-              AND a.state IN ('running', 'stopped')
+              AND a.state IN ('running', 'stopped', 'installing')
               AND v.consumes IS NOT NULL
               AND v.consumes != '[]'
         """, (provider_app_id,)) as cur:
@@ -451,10 +451,64 @@ async def _run_hook(
     return has_degraded
 
 
+async def _prep_provider_networks(job_id: str, providers: list[dict]) -> None:
+    """
+    Recompile and re-up each connectivity provider so it creates and joins the
+    shared Docker network before the consumer's IR is compiled. Non-fatal —
+    a failure here is logged as CONTINUE_SUCCESS and does not abort the install.
+    """
+    for provider in providers:
+        provider_id = provider["id"]
+        slug = provider.get("slug", provider_id)
+        try:
+            provider_app = await _load_app(provider_id)
+            if not provider_app or _is_passthrough(provider_app):
+                continue
+
+            compose_yaml, env_content, ir_hash, compose_hash, _ = await _compile_and_render(
+                job_id, provider_id, provider_app
+            )
+
+            if compose_hash == provider_app.get("compose_hash", ""):
+                continue  # compose unchanged — provider already on correct networks
+
+            compose_path, _ = write_compose_files(provider_app["slug"], compose_yaml, env_content)
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE installed_apps SET compose_path = ?, ir_hash = ?, compose_hash = ? WHERE id = ?",
+                    (compose_path, ir_hash, compose_hash, provider_id),
+                )
+                await db.commit()
+
+            result = await _docker_compose(compose_path, ["up", "-d"])
+            log = (result.stdout + result.stderr).strip()
+            status = StepStatus.SUCCESS.value if result.returncode == 0 else StepStatus.CONTINUE_SUCCESS.value
+            await _add_step(job_id, f"prep_provider_{slug}", status,
+                            log[:500] or f"Provider {slug} joined shared network",
+                            finished_at=_now())
+        except Exception as exc:
+            await _add_step(job_id, f"prep_provider_{slug}", StepStatus.CONTINUE_SUCCESS.value,
+                            f"Provider network prep failed (non-fatal): {exc}", finished_at=_now())
+
+
 async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> bool:
     hooks = app.get("hook_definitions", {})
     slug = app["slug"]
     has_degraded = False
+
+    # Before compiling the consumer IR: update each connectivity provider's
+    # compose so it creates the shared Docker network. The consumer's IR
+    # compile (below) then sees the network as existing and joins it.
+    if not dry_run and not _is_passthrough(app):
+        consumes_raw = app.get("consumes", [])
+        if isinstance(consumes_raw, str):
+            try:
+                consumes_raw = json.loads(consumes_raw)
+            except Exception:
+                consumes_raw = []
+        connectivity_providers = await _find_connectivity_providers(app_id, consumes_raw)
+        if connectivity_providers:
+            await _prep_provider_networks(job_id, connectivity_providers)
 
     app_ir = None
     if _is_passthrough(app):
