@@ -59,6 +59,10 @@ provides:
     type: endpoint
     sensitive: false
     rotates: false
+  - key: sonarr.url_external
+    type: endpoint
+    sensitive: false
+    rotates: false
   - key: sonarr.prowlarr_app_id
     type: metadata
     sensitive: false
@@ -69,6 +73,9 @@ consumes:
     required: false
     connectivity: true
   - key: prowlarr.url_internal
+    required: false
+    connectivity: false
+  - key: prowlarr.url_external
     required: false
     connectivity: false
 

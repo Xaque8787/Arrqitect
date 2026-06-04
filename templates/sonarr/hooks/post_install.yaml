@@ -42,7 +42,7 @@ steps:
       - read_self_api_key
     description: Publish Sonarr's own API key so consumers can authenticate to it.
 
-  - id: publish_self_url
+  - id: publish_self_url_internal
     type: registry_write
     key: sonarr.url_internal
     value_template: "sonarr:8989"
@@ -51,7 +51,22 @@ steps:
     timeout_seconds: 10
     depends_on:
       - publish_self_api_key
-    description: Publish Sonarr's internal Docker network URL.
+    description: >
+      Publish Sonarr's Docker service hostname. Used by other containers
+      to connect to Sonarr within the Docker network.
+
+  - id: publish_self_url_external
+    type: registry_write
+    key: sonarr.url_external
+    value_template: "localhost:{inputs.web_ui_port}"
+    on_error: fail
+    critical: true
+    timeout_seconds: 10
+    depends_on:
+      - publish_self_url_internal
+    description: >
+      Publish Sonarr's host-accessible URL. Used by the hook executor
+      when it needs to make direct HTTP calls to Sonarr's API.
 
   # --- Phase 2: register with Prowlarr ---
 
@@ -63,7 +78,7 @@ steps:
     critical: false
     timeout_seconds: 10
     depends_on:
-      - publish_self_url
+      - publish_self_url_external
     description: >
       Read Prowlarr's API key. If not found, returns CONTINUE_SUCCESS
       (job = DEGRADED). Reconcile fires when Prowlarr publishes.

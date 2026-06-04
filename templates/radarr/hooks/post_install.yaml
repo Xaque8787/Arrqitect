@@ -44,7 +44,7 @@ steps:
       - read_self_api_key
     description: Publish Radarr's own API key so consumers can authenticate to it.
 
-  - id: publish_self_url
+  - id: publish_self_url_internal
     type: registry_write
     key: radarr.url_internal
     value_template: "radarr:7878"
@@ -53,7 +53,22 @@ steps:
     timeout_seconds: 10
     depends_on:
       - publish_self_api_key
-    description: Publish Radarr's internal Docker network URL.
+    description: >
+      Publish Radarr's Docker service hostname. Used by other containers
+      to connect to Radarr within the Docker network.
+
+  - id: publish_self_url_external
+    type: registry_write
+    key: radarr.url_external
+    value_template: "localhost:{inputs.web_ui_port}"
+    on_error: fail
+    critical: true
+    timeout_seconds: 10
+    depends_on:
+      - publish_self_url_internal
+    description: >
+      Publish Radarr's host-accessible URL. Used by the hook executor
+      when it needs to make direct HTTP calls to Radarr's API.
 
   # --- Phase 2: register with Prowlarr ---
 
@@ -65,7 +80,7 @@ steps:
     critical: false
     timeout_seconds: 10
     depends_on:
-      - publish_self_url
+      - publish_self_url_external
     description: >
       Read Prowlarr's API key. If not found, returns CONTINUE_SUCCESS
       (job = DEGRADED). Reconcile fires when Prowlarr publishes.
