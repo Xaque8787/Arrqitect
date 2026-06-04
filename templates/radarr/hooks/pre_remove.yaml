@@ -37,9 +37,9 @@ steps:
   - id: deregister_from_prowlarr
     type: http_request
     method: DELETE
-    url_template: "http://{registry.prowlarr_url}/api/v1/applications/{registry.prowlarr_app_id}"
+    url_template: "http://<<registry.prowlarr_url>>/api/v1/applications/<<registry.prowlarr_app_id>>"
     headers:
-      X-Api-Key: "{registry.prowlarr_api_key}"
+      X-Api-Key: "<<registry.prowlarr_api_key>>"
     when: "registry.prowlarr_app_id != ''"
     on_error: continue
     critical: false

@@ -13,7 +13,7 @@ steps:
 
   - id: wait_for_config
     type: wait_for_file
-    path_template: "{app.install_dir}/config/config.xml"
+    path_template: "<<app.install_dir>>/config/config.xml"
     poll_interval_seconds: 5
     timeout_seconds: 180
     on_error: fail
@@ -22,7 +22,7 @@ steps:
 
   - id: read_self_api_key
     type: file_read
-    path_template: "{app.install_dir}/config/config.xml"
+    path_template: "<<app.install_dir>>/config/config.xml"
     regex: "<ApiKey>(.*?)</ApiKey>"
     group: 1
     bind_as: radarr_self_api_key
@@ -36,7 +36,7 @@ steps:
   - id: publish_self_api_key
     type: registry_write
     key: radarr.api_key
-    value_template: "{registry.radarr_self_api_key}"
+    value_template: "<<registry.radarr_self_api_key>>"
     on_error: fail
     critical: true
     timeout_seconds: 10
@@ -60,7 +60,7 @@ steps:
   - id: publish_self_url_external
     type: registry_write
     key: radarr.url_external
-    value_template: "host.docker.internal:{inputs.web_ui_port}"
+    value_template: "host.docker.internal:<<inputs.web_ui_port>>"
     on_error: fail
     critical: true
     timeout_seconds: 10
@@ -108,31 +108,17 @@ steps:
     depends_on:
       - read_prowlarr_url_internal
     description: >
-      Host-accessible URL used by the executor (running on the host,
-      not inside Docker) to make direct HTTP calls to Prowlarr's API.
+      Host-accessible URL used by the executor to make direct HTTP calls
+      to Prowlarr's API.
 
   - id: register_with_prowlarr
     type: http_request
     method: POST
-    url_template: "http://{registry.prowlarr_url_external}/api/v1/applications"
+    url_template: "http://<<registry.prowlarr_url_external>>/api/v1/applications"
     headers:
       Content-Type: "application/json"
-      X-Api-Key: "{registry.prowlarr_api_key}"
-    body_template: >-
-      {
-        "name": "Radarr",
-        "syncLevel": "fullSync",
-        "implementationName": "Radarr",
-        "implementation": "Radarr",
-        "configContract": "RadarrSettings",
-        "fields": [
-          {"name": "prowlarrUrl", "value": "http://{registry.prowlarr_url_internal}"},
-          {"name": "baseUrl", "value": "http://radarr:7878"},
-          {"name": "apiKey", "value": "{registry.radarr_self_api_key}"},
-          {"name": "syncCategories", "value": [2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060, 2070, 2080]}
-        ],
-        "tags": []
-      }
+      X-Api-Key: "<<registry.prowlarr_api_key>>"
+    body_template: '{"name":"Radarr","syncLevel":"fullSync","implementationName":"Radarr","implementation":"Radarr","configContract":"RadarrSettings","fields":[{"name":"prowlarrUrl","value":"http://<<registry.prowlarr_url_internal>>"},{"name":"baseUrl","value":"http://radarr:7878"},{"name":"apiKey","value":"<<registry.radarr_self_api_key>>"},{"name":"syncCategories","value":[2000,2010,2020,2030,2040,2045,2050,2060,2070,2080]}],"tags":[]}'
     bind_response_json:
       bind_as: radarr_prowlarr_app_id
       path: "id"
@@ -150,7 +136,7 @@ steps:
   - id: store_app_id
     type: registry_write
     key: radarr.prowlarr_app_id
-    value_template: "{registry.radarr_prowlarr_app_id}"
+    value_template: "<<registry.radarr_prowlarr_app_id>>"
     when: "registry.prowlarr_api_key != ''"
     on_error: continue
     critical: false

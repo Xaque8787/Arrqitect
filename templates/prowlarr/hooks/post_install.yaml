@@ -8,7 +8,7 @@ description: >
 steps:
   - id: wait_for_config
     type: wait_for_file
-    path_template: "{app.install_dir}/config/config.xml"
+    path_template: "<<app.install_dir>>/config/config.xml"
     poll_interval_seconds: 5
     timeout_seconds: 180
     on_error: fail
@@ -20,7 +20,7 @@ steps:
 
   - id: read_api_key
     type: file_read
-    path_template: "{app.install_dir}/config/config.xml"
+    path_template: "<<app.install_dir>>/config/config.xml"
     regex: "<ApiKey>(.*?)</ApiKey>"
     group: 1
     bind_as: prowlarr_real_api_key
@@ -34,7 +34,7 @@ steps:
   - id: publish_api_key
     type: registry_write
     key: prowlarr.api_key
-    value_template: "{registry.prowlarr_real_api_key}"
+    value_template: "<<registry.prowlarr_real_api_key>>"
     on_error: fail
     critical: true
     timeout_seconds: 10
@@ -60,7 +60,7 @@ steps:
   - id: publish_url_external
     type: registry_write
     key: prowlarr.url_external
-    value_template: "host.docker.internal:{inputs.web_ui_port}"
+    value_template: "host.docker.internal:<<inputs.web_ui_port>>"
     on_error: fail
     critical: true
     timeout_seconds: 10

@@ -24,7 +24,7 @@ Hook definition schema (YAML):
 
     registry_write:
         key: <capability_key>              # MUST start with own template slug
-        value_template: "<string with {context.varname} substitutions>"
+        value_template: "<string with <<context.varname>> substitutions>"
 
     http_request:
         url_template: "<string>"
@@ -676,7 +676,7 @@ def _render_template(template: str, context: dict) -> str:
         path = m.group(1).strip()
         val = _resolve_path(path, context)
         return str(val) if val is not None else ""
-    return re.sub(r"\{([^}]+)\}", replace, template)
+    return re.sub(r"<<([^>]+)>>", replace, template)
 
 
 def _resolve_path(dotpath: str, context: dict) -> str | None:
