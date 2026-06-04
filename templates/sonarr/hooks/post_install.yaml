@@ -116,7 +116,7 @@ steps:
     headers:
       Content-Type: "application/json"
       X-Api-Key: "<<registry.prowlarr_api_key>>"
-    body_template: '{"name":"Sonarr","syncLevel":"fullSync","implementationName":"Sonarr","implementation":"Sonarr","configContract":"SonarrSettings","fields":[{"name":"prowlarrUrl","value":"http://<<registry.prowlarr_url_internal>>"},{"name":"baseUrl","value":"http://sonarr:8989"},{"name":"apiKey","value":"<<registry.sonarr_self_api_key>>"},{"name":"syncCategories","value":[5000,5010,5020,5030,5040,5045,5050,5060,5070,5080]}],"tags":[]}'
+    body_template: '{"name":"Sonarr","syncLevel":"fullSync","implementationName":"Sonarr","implementation":"Sonarr","configContract":"SonarrSettings","fields":[{"name":"prowlarrUrl","value":"http://<<registry.prowlarr_url_external>>"},{"name":"baseUrl","value":"http://host.docker.internal:<<inputs.web_ui_port>>"},{"name":"apiKey","value":"<<registry.sonarr_self_api_key>>"},{"name":"syncCategories","value":[5000,5010,5020,5030,5040,5045,5050,5060,5070,5080]}],"tags":[]}'
     bind_response_json:
       bind_as: sonarr_prowlarr_app_id
       path: "id"

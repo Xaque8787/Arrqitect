@@ -118,7 +118,7 @@ steps:
     headers:
       Content-Type: "application/json"
       X-Api-Key: "<<registry.prowlarr_api_key>>"
-    body_template: '{"name":"Radarr","syncLevel":"fullSync","implementationName":"Radarr","implementation":"Radarr","configContract":"RadarrSettings","fields":[{"name":"prowlarrUrl","value":"http://<<registry.prowlarr_url_internal>>"},{"name":"baseUrl","value":"http://radarr:7878"},{"name":"apiKey","value":"<<registry.radarr_self_api_key>>"},{"name":"syncCategories","value":[2000,2010,2020,2030,2040,2045,2050,2060,2070,2080]}],"tags":[]}'
+    body_template: '{"name":"Radarr","syncLevel":"fullSync","implementationName":"Radarr","implementation":"Radarr","configContract":"RadarrSettings","fields":[{"name":"prowlarrUrl","value":"http://<<registry.prowlarr_url_external>>"},{"name":"baseUrl","value":"http://host.docker.internal:<<inputs.web_ui_port>>"},{"name":"apiKey","value":"<<registry.radarr_self_api_key>>"},{"name":"syncCategories","value":[2000,2010,2020,2030,2040,2045,2050,2060,2070,2080]}],"tags":[]}'
     bind_response_json:
       bind_as: radarr_prowlarr_app_id
       path: "id"
