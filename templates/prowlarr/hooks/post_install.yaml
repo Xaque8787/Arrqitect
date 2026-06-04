@@ -44,7 +44,7 @@ steps:
       Publish the real API key. The capability_version bump triggers
       reconcile jobs for all consumers (Radarr, Sonarr).
 
-  - id: publish_url
+  - id: publish_url_internal
     type: registry_write
     key: prowlarr.url_internal
     value_template: "prowlarr:9696"
@@ -53,11 +53,27 @@ steps:
     timeout_seconds: 10
     depends_on:
       - publish_api_key
-    description: Publish Prowlarr's internal Docker network URL.
+    description: >
+      Publish Prowlarr's Docker service hostname. Used by other containers
+      (Radarr, Sonarr) to connect to Prowlarr within the Docker network.
+
+  - id: publish_url_external
+    type: registry_write
+    key: prowlarr.url_external
+    value_template: "localhost:{inputs.web_ui_port}"
+    on_error: fail
+    critical: true
+    timeout_seconds: 10
+    depends_on:
+      - publish_url_internal
+    description: >
+      Publish Prowlarr's host-accessible URL using the published port.
+      Used by the hook executor (which runs on the host, not inside Docker)
+      when it needs to make direct HTTP calls to Prowlarr's API.
 
   - id: log_complete
     type: log
-    message: "Prowlarr capabilities published — real api_key and url_internal registered"
+    message: "Prowlarr capabilities published — api_key, url_internal, and url_external registered"
     depends_on:
-      - publish_url
+      - publish_url_external
     timeout_seconds: 5

@@ -42,6 +42,11 @@ provides:
     sensitive: false
     rotates: false
 
+  - key: prowlarr.url_external
+    type: endpoint
+    sensitive: false
+    rotates: false
+
   - key: prowlarr.api_key
     type: credential
     sensitive: true
