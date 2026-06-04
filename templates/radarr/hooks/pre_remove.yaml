@@ -1,10 +1,60 @@
 description: >
-  Clean up before Radarr is removed.
-  Radarr provides no capabilities, so there is nothing
-  to deregister. This hook is a no-op placeholder.
+  Deregister Radarr from Prowlarr before removal.
+  Reads the stored Prowlarr application registration ID and calls
+  DELETE on Prowlarr's applications API. Uses on_error: continue
+  throughout so removal is never blocked by Prowlarr being unavailable.
 
 steps:
-  - id: log_removing
+  - id: read_prowlarr_api_key
+    type: registry_read
+    key: prowlarr.api_key
+    bind_as: prowlarr_api_key
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+
+  - id: read_prowlarr_url
+    type: registry_read
+    key: prowlarr.url_internal
+    bind_as: prowlarr_url
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    depends_on:
+      - read_prowlarr_api_key
+
+  - id: read_app_id
+    type: registry_read
+    key: radarr.prowlarr_app_id
+    bind_as: prowlarr_app_id
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    depends_on:
+      - read_prowlarr_url
+    description: Read the application registration ID stored during post_install.
+
+  - id: deregister_from_prowlarr
+    type: http_request
+    method: DELETE
+    url_template: "http://{registry.prowlarr_url}/api/v1/applications/{registry.prowlarr_app_id}"
+    headers:
+      X-Api-Key: "{registry.prowlarr_api_key}"
+    when: "registry.prowlarr_app_id != ''"
+    on_error: continue
+    critical: false
+    timeout_seconds: 15
+    depends_on:
+      - read_app_id
+    description: >
+      DELETE the Radarr application registration from Prowlarr.
+      Skipped if no registration ID was stored (e.g. Prowlarr was
+      never ready during install). on_error: continue ensures removal
+      proceeds even if Prowlarr is down.
+
+  - id: log_complete
     type: log
-    message: "Radarr pre-remove: no capability cleanup required"
+    message: "Radarr pre-remove: Prowlarr deregistration complete"
+    depends_on:
+      - deregister_from_prowlarr
     timeout_seconds: 5

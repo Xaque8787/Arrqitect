@@ -50,7 +50,11 @@ services:
       restart:
         behavior: persistent
 
-provides: []
+provides:
+  - key: sonarr.prowlarr_app_id
+    type: metadata
+    sensitive: false
+    rotates: false
 
 consumes:
   - key: prowlarr.api_key

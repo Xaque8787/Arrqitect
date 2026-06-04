@@ -1,66 +1,12 @@
 description: >
-  Deregister Prowlarr from downstream arr apps before removal.
-  Steps are guarded by when: conditions so they only run when
-  the target app is actually installed. This tests the frozen
-  'when:' grammar and skip propagation semantics: if the read
-  step is skipped (provider absent), the deregister step that
-  depends on it is also skipped.
+  Pre-remove cleanup for Prowlarr.
+  The job runner fires a provider_removed event which triggers
+  reconcile hooks on all consumers (Radarr, Sonarr). Each consumer's
+  pre_remove hook handles its own self-deregistration from Prowlarr
+  before this point. This hook is a no-op.
 
 steps:
-  - id: read_radarr_url
-    type: registry_read
-    key: radarr.url_internal
-    bind_as: radarr_url
-    when: "registry.radarr_url_internal == 'present'"
-    on_error: continue
-    critical: false
-    timeout_seconds: 10
-    description: >
-      Read Radarr's internal URL so we can call its API.
-      The when: condition checks a sentinel that is only set
-      when Radarr is installed. If absent, this step is skipped
-      and deregister_from_radarr is also skipped (unsatisfied dependency).
-
-  - id: deregister_from_radarr
-    type: http_request
-    depends_on:
-      - read_radarr_url
-    url_template: "http://{registry.radarr_url}/api/v3/indexer"
-    method: GET
-    on_error: continue
-    critical: false
-    timeout_seconds: 15
-    description: >
-      Attempt to contact Radarr's API as a de-registration signal.
-      Depends on read_radarr_url — if that step was skipped (Radarr
-      not installed), this step is also skipped per the frozen rule:
-      a skipped dependency is unsatisfied regardless of why it skipped.
-
-  - id: read_sonarr_url
-    type: registry_read
-    key: sonarr.url_internal
-    bind_as: sonarr_url
-    when: "registry.sonarr_url_internal == 'present'"
-    on_error: continue
-    critical: false
-    timeout_seconds: 10
-    description: >
-      Read Sonarr's internal URL. Same pattern as Radarr above.
-
-  - id: deregister_from_sonarr
-    type: http_request
-    depends_on:
-      - read_sonarr_url
-    url_template: "http://{registry.sonarr_url}/api/v3/indexer"
-    method: GET
-    on_error: continue
-    critical: false
-    timeout_seconds: 15
-    description: >
-      Attempt to contact Sonarr's API as a de-registration signal.
-      Depends on read_sonarr_url — skipped if Sonarr not installed.
-
-  - id: log_complete
+  - id: log_removing
     type: log
-    message: "Prowlarr pre-remove deregistration complete (skipped steps indicate provider was absent)"
+    message: "Prowlarr pre-remove: consumers will self-deregister via their own pre_remove hooks"
     timeout_seconds: 5

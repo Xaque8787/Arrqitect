@@ -1,9 +1,49 @@
 description: >
-  Publish Prowlarr's own capabilities after installation.
-  Prowlarr publishes its API key and internal URL so that
-  Radarr and Sonarr can consume them via their post_install hooks.
+  Publish Prowlarr's real capabilities after installation.
+  Waits for Prowlarr to write its config file, extracts the actual
+  API key, then publishes it and the internal URL to the registry.
+  When the real key is published (capability_version bump), the
+  reconciler automatically re-runs Radarr/Sonarr registration hooks.
 
 steps:
+  - id: wait_for_config
+    type: wait_for_file
+    path_template: "{app.install_dir}/config/config.xml"
+    poll_interval_seconds: 5
+    timeout_seconds: 180
+    on_error: fail
+    critical: true
+    description: >
+      Block until Prowlarr writes its config.xml on first boot.
+      Prowlarr generates the API key and persists it here before
+      its web UI becomes available.
+
+  - id: read_api_key
+    type: file_read
+    path_template: "{app.install_dir}/config/config.xml"
+    regex: "<ApiKey>(.*?)</ApiKey>"
+    group: 1
+    bind_as: prowlarr_real_api_key
+    on_error: fail
+    critical: true
+    timeout_seconds: 10
+    depends_on:
+      - wait_for_config
+    description: Extract the real API key from Prowlarr's config file.
+
+  - id: publish_api_key
+    type: registry_write
+    key: prowlarr.api_key
+    value_template: "{registry.prowlarr_real_api_key}"
+    on_error: fail
+    critical: true
+    timeout_seconds: 10
+    depends_on:
+      - read_api_key
+    description: >
+      Publish the real API key. The capability_version bump triggers
+      reconcile jobs for all consumers (Radarr, Sonarr).
+
   - id: publish_url
     type: registry_write
     key: prowlarr.url_internal
@@ -11,25 +51,13 @@ steps:
     on_error: fail
     critical: true
     timeout_seconds: 10
-    description: Publish Prowlarr's internal URL (container hostname:port).
-
-  - id: publish_api_key
-    type: registry_write
-    key: prowlarr.api_key
-    value_template: "pending_manual_setup"
-    on_error: fail
-    critical: true
-    timeout_seconds: 10
-    description: >
-      Publish a placeholder API key. The real key is retrieved from
-      Prowlarr's config file after it starts. For Phase 1 this
-      publishes a placeholder to trigger the event system.
     depends_on:
-      - publish_url
+      - publish_api_key
+    description: Publish Prowlarr's internal Docker network URL.
 
   - id: log_complete
     type: log
-    message: "Prowlarr capabilities published — url_internal and api_key registered"
+    message: "Prowlarr capabilities published — real api_key and url_internal registered"
     depends_on:
-      - publish_api_key
+      - publish_url
     timeout_seconds: 5

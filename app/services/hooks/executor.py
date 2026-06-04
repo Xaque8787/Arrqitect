@@ -1,5 +1,5 @@
 """
-Hook executor — Phase 1.
+Hook executor — Phase 2.
 
 Reads a hook definition YAML, builds a dependency DAG, evaluates step
 eligibility, executes steps in topological order, and records job_steps
@@ -10,6 +10,7 @@ Hook definition schema (YAML):
     steps:
       - id: <string>              # unique within this hook
         type: registry_read | registry_write | http_request | compose_command | log
+             | wait_for_file | file_read
         when: "<namespace>.<field> (==|!=) '<literal>'"  # optional
         depends_on: [<step_id>, ...]                     # optional
         on_error: fail | continue                        # optional, default: fail
@@ -19,7 +20,7 @@ Hook definition schema (YAML):
 
     registry_read:
         key: <capability_key>
-        bind_as: <context_variable_name>   # makes value available as context.<bind_as>
+        bind_as: <context_variable_name>   # makes value available as registry.<bind_as>
 
     registry_write:
         key: <capability_key>              # MUST start with own template slug
@@ -30,6 +31,9 @@ Hook definition schema (YAML):
         method: GET | POST | PUT | DELETE
         body_template: "<string>"          # optional
         headers: {key: value}              # optional
+        bind_response_json:                # optional — bind a field from JSON response
+          bind_as: <context_variable_name> # stored as registry.<bind_as>
+          path: "<dot.separated.field>"    # e.g. "id" or "result.token"
 
     compose_command:
         command: [<string>, ...]           # passed to docker compose
@@ -37,12 +41,25 @@ Hook definition schema (YAML):
     log:
         message: "<string>"                # simple log step for testing/debugging
 
+    wait_for_file:
+        path_template: "<string>"          # supports {app.install_dir} etc.
+        poll_interval_seconds: <int>       # default 5
+        timeout_seconds: <int>             # default 120 (overrides step-level timeout)
+
+    file_read:
+        path_template: "<string>"          # supports {app.install_dir} etc.
+        regex: "<pattern>"                 # optional — extract a value
+        group: <int>                       # capture group index, default 1
+        bind_as: <context_variable_name>   # required; stored as registry.<bind_as>
+
 Context available during execution:
-    registry.<key_with_dots_replaced_by_dots>: <value>   # from registry_read steps
-    reconcile.event_type: <string>                        # if is_reconcile
-    reconcile.provider_slug: <string>                     # if is_reconcile
+    registry.<varname>: <value>            # from registry_read, file_read, bind_response_json
+    reconcile.event_type: <string>         # if is_reconcile
+    reconcile.provider_slug: <string>      # if is_reconcile
     app.slug: <string>
     app.id: <string>
+    app.install_dir: <path>                # parent dir of the app's compose file
+    inputs.<id>: <value>                   # from the installed app's stored config
 
 Cross-capability incoherence contract (canonical):
     Capability reads within a hook execution are independent observations of
@@ -109,6 +126,50 @@ class _StepDef:
     params: dict           # type-specific params
 
 
+async def _build_exec_context(ctx: HookContext) -> dict:
+    """
+    Build the initial exec_context for a hook execution.
+    Fetches compose_path and config from the DB to populate
+    app.install_dir and inputs.*.
+    """
+    exec_context: dict = {
+        "registry": {},
+        "reconcile": {
+            "event_type": ctx.event_type,
+            "provider_slug": ctx.provider_slug,
+        },
+        "app": {
+            "slug": ctx.app_slug,
+            "id": ctx.app_id,
+            "install_dir": "",
+        },
+        "inputs": {},
+    }
+
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT compose_path, config FROM installed_apps WHERE id = ?",
+            (ctx.app_id,)
+        ) as cur:
+            row = await cur.fetchone()
+
+    if row:
+        compose_path = row[0] or ""
+        config_raw = row[1] or "{}"
+
+        if compose_path:
+            exec_context["app"]["install_dir"] = str(Path(compose_path).parent)
+
+        try:
+            config = json.loads(config_raw) if isinstance(config_raw, str) else (config_raw or {})
+        except Exception:
+            config = {}
+
+        exec_context["inputs"] = {str(k): str(v) for k, v in config.items()}
+
+    return exec_context
+
+
 async def execute_hook(
     ctx: HookContext,
     broadcast: Callable[[str, str], Awaitable[None]] | None = None,
@@ -143,12 +204,10 @@ async def execute_hook(
 
     raw_steps = raw.get("steps", [])
     if not raw_steps:
-        # Empty hook — not an error
         return True, False
 
     steps = _parse_step_defs(raw_steps)
     if isinstance(steps, str):
-        # parse error message returned
         await _record_step(ctx.job_id, ctx.hook_name, StepStatus.FAILED,
                            f"Hook definition error: {steps}", broadcast)
         return False, False
@@ -159,18 +218,7 @@ async def execute_hook(
                            f"Hook DAG contains a cycle involving: {cycle}", broadcast)
         return False, False
 
-    # Build initial execution context
-    exec_context: dict = {
-        "registry": {},
-        "reconcile": {
-            "event_type": ctx.event_type,
-            "provider_slug": ctx.provider_slug,
-        },
-        "app": {
-            "slug": ctx.app_slug,
-            "id": ctx.app_id,
-        },
-    }
+    exec_context = await _build_exec_context(ctx)
 
     step_map = {s.id: s for s in steps}
     step_results: dict[str, StepStatus] = {}
@@ -216,7 +264,7 @@ async def execute_hook(
             step, exec_context, ctx
         )
 
-        # Apply side effects (registry reads bind into context)
+        # Apply side effects (registry reads, file_read, response bindings)
         for k, v in side_effects.items():
             _set_nested(exec_context, k, v)
 
@@ -227,12 +275,8 @@ async def execute_hook(
             has_degraded = True
         elif step_status == StepStatus.FAILED:
             if step.on_error == "continue":
-                # Treat as CONTINUE_SUCCESS — already recorded as such above
-                # (executor returns CONTINUE_SUCCESS when on_error=continue)
-                # This branch is for a step that returned FAILED with on_error=fail
                 blocking_failure = True
                 break
-            # on_error == "fail" and step failed — stop
             blocking_failure = True
             break
 
@@ -259,6 +303,10 @@ async def _execute_step(
             return await _step_http_request(step, exec_context, ctx, timeout)
         elif step.step_type == "compose_command":
             return await _step_compose_command(step, exec_context, ctx, timeout)
+        elif step.step_type == "wait_for_file":
+            return await _step_wait_for_file(step, exec_context, ctx, timeout)
+        elif step.step_type == "file_read":
+            return await _step_file_read(step, exec_context, ctx, timeout)
         elif step.step_type == "log":
             return await _step_log(step, exec_context)
         else:
@@ -302,7 +350,6 @@ async def _step_registry_read(
     sensitive = bool(row[1])
     cap_version = row[2]
 
-    # Track observed version for cross-capability incoherence audit
     ctx.observed_versions[key] = cap_version
 
     side_effects = {}
@@ -323,7 +370,6 @@ async def _step_registry_write(
     if not key:
         return StepStatus.FAILED, "registry_write: missing 'key'", {}
 
-    # Namespace ownership enforcement
     if not key.startswith(f"{ctx.template_slug}."):
         return StepStatus.FAILED, (
             f"registry_write: key {key!r} is outside namespace {ctx.template_slug!r}. "
@@ -333,7 +379,6 @@ async def _step_registry_write(
     value = _render_template(value_template, exec_context)
 
     async with get_db() as db:
-        # Check if key already exists to determine version
         async with db.execute("""
             SELECT r.id, r.capability_version
             FROM app_registry r
@@ -350,7 +395,6 @@ async def _step_registry_write(
                 WHERE id = ?
             """, (value, new_version, _now(), existing[0]))
         else:
-            # Determine type from key suffix conventions
             cap_type = _infer_capability_type(key)
             sensitive = cap_type == "credential"
             new_version = 1
@@ -373,6 +417,7 @@ async def _step_http_request(
     method = step.params.get("method", "GET").upper()
     body_template = step.params.get("body_template", "")
     headers = step.params.get("headers", {})
+    bind_response = step.params.get("bind_response_json")
 
     url = _render_template(url_template, exec_context)
     body = _render_template(body_template, exec_context) if body_template else None
@@ -389,8 +434,25 @@ async def _step_http_request(
                 content=body.encode() if body else None,
                 headers=headers,
             )
+
+        side_effects: dict = {}
+        if bind_response and resp.is_success:
+            bind_as = bind_response.get("bind_as", "")
+            json_path = bind_response.get("path", "")
+            if bind_as:
+                try:
+                    resp_json = resp.json()
+                    extracted = _resolve_path(json_path, resp_json) if json_path else resp_json
+                    side_effects[f"registry.{bind_as}"] = str(extracted) if extracted is not None else ""
+                except Exception as exc:
+                    side_effects[f"registry.{bind_as}"] = ""
+                    return StepStatus.CONTINUE_SUCCESS if step.on_error == "continue" else StepStatus.FAILED, (
+                        f"http_request: {method} {url} → {resp.status_code} "
+                        f"but bind_response_json failed: {exc}"
+                    ), side_effects
+
         if resp.is_success:
-            return StepStatus.SUCCESS, f"http_request: {method} {url} → {resp.status_code}", {}
+            return StepStatus.SUCCESS, f"http_request: {method} {url} → {resp.status_code}", side_effects
         if step.on_error == "continue":
             return StepStatus.CONTINUE_SUCCESS, (
                 f"http_request: {method} {url} → {resp.status_code} "
@@ -408,15 +470,10 @@ async def _step_http_request(
 async def _step_compose_command(
     step: _StepDef, exec_context: dict, ctx: HookContext, timeout: int
 ) -> tuple[StepStatus, str, dict]:
-    """
-    Run a docker compose sub-command against the app's compose file.
-    The compose_path must be resolvable from the installed_apps record.
-    """
     command = step.params.get("command", [])
     if not command:
         return StepStatus.FAILED, "compose_command: missing 'command'", {}
 
-    # Fetch compose_path for this app
     async with get_db() as db:
         async with db.execute(
             "SELECT compose_path FROM installed_apps WHERE id = ?", (ctx.app_id,)
@@ -453,6 +510,77 @@ async def _step_compose_command(
         return StepStatus.TIMEOUT, f"compose_command timed out after {timeout}s", {}
 
 
+async def _step_wait_for_file(
+    step: _StepDef, exec_context: dict, ctx: HookContext, timeout: int
+) -> tuple[StepStatus, str, dict]:
+    path_template = step.params.get("path_template", "")
+    poll_interval = int(step.params.get("poll_interval_seconds", 5))
+    # wait_for_file has its own timeout that overrides step-level timeout
+    wait_timeout = int(step.params.get("timeout_seconds", timeout))
+
+    if not path_template:
+        return StepStatus.FAILED, "wait_for_file: missing 'path_template'", {}
+
+    target_path = _render_template(path_template, exec_context)
+    if not target_path:
+        return StepStatus.FAILED, "wait_for_file: path_template resolved to empty string", {}
+
+    elapsed = 0
+    while elapsed < wait_timeout:
+        if Path(target_path).exists():
+            return StepStatus.SUCCESS, f"wait_for_file: {target_path} found after {elapsed}s", {}
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+
+    if step.on_error == "continue":
+        return StepStatus.CONTINUE_SUCCESS, (
+            f"wait_for_file: {target_path} not found after {wait_timeout}s (on_error: continue)"
+        ), {}
+    return StepStatus.TIMEOUT, f"wait_for_file: {target_path} not found after {wait_timeout}s", {}
+
+
+async def _step_file_read(
+    step: _StepDef, exec_context: dict, ctx: HookContext, timeout: int
+) -> tuple[StepStatus, str, dict]:
+    path_template = step.params.get("path_template", "")
+    regex = step.params.get("regex", "")
+    group = int(step.params.get("group", 1))
+    bind_as = step.params.get("bind_as", "")
+
+    if not path_template:
+        return StepStatus.FAILED, "file_read: missing 'path_template'", {}
+    if not bind_as:
+        return StepStatus.FAILED, "file_read: missing 'bind_as'", {}
+
+    target_path = _render_template(path_template, exec_context)
+    if not target_path:
+        return StepStatus.FAILED, "file_read: path_template resolved to empty string", {}
+
+    try:
+        content = Path(target_path).read_text()
+    except OSError as exc:
+        if step.on_error == "continue":
+            return StepStatus.CONTINUE_SUCCESS, f"file_read: could not read {target_path} (on_error: continue): {exc}", {f"registry.{bind_as}": ""}
+        return StepStatus.FAILED, f"file_read: could not read {target_path}: {exc}", {}
+
+    if regex:
+        match = re.search(regex, content)
+        if not match:
+            if step.on_error == "continue":
+                return StepStatus.CONTINUE_SUCCESS, f"file_read: regex {regex!r} not matched in {target_path} (on_error: continue)", {f"registry.{bind_as}": ""}
+            return StepStatus.FAILED, f"file_read: regex {regex!r} not matched in {target_path}", {}
+        try:
+            value = match.group(group)
+        except IndexError:
+            return StepStatus.FAILED, f"file_read: regex has no group {group}", {}
+    else:
+        value = content
+
+    side_effects = {f"registry.{bind_as}": value}
+    display = "***" if "key" in bind_as.lower() or "password" in bind_as.lower() else value[:80]
+    return StepStatus.SUCCESS, f"file_read: {target_path} → {bind_as!r} = {display!r}", side_effects
+
+
 async def _step_log(
     step: _StepDef, exec_context: dict,
 ) -> tuple[StepStatus, str, dict]:
@@ -463,10 +591,6 @@ async def _step_log(
 # --- parsing helpers ---
 
 def _parse_step_defs(raw_steps: list) -> list[_StepDef] | str:
-    """
-    Parse raw YAML step list into _StepDef objects.
-    Returns error message string on failure.
-    """
     steps = []
     seen_ids: set[str] = set()
     for i, raw in enumerate(raw_steps):
@@ -499,7 +623,6 @@ def _parse_step_defs(raw_steps: list) -> list[_StepDef] | str:
                     if k not in ("id", "type", "when", "depends_on", "on_error", "critical", "timeout_seconds")},
         ))
 
-    # Validate dependency references
     all_ids = {s.id for s in steps}
     for step in steps:
         for dep in step.depends_on:
@@ -510,12 +633,6 @@ def _parse_step_defs(raw_steps: list) -> list[_StepDef] | str:
 
 
 def _topological_sort(steps: list[_StepDef]) -> tuple[list[str], str | None]:
-    """
-    Kahn's algorithm topological sort.
-    Returns (order, cycle_description).
-    cycle_description is None if no cycle detected.
-    """
-    graph: dict[str, set[str]] = {s.id: set(s.depends_on) for s in steps}
     in_degree: dict[str, int] = {s.id: len(s.depends_on) for s in steps}
     dependents: dict[str, list[str]] = {s.id: [] for s in steps}
 
@@ -544,7 +661,6 @@ def _topological_sort(steps: list[_StepDef]) -> tuple[list[str], str | None]:
 # --- context helpers ---
 
 def _set_nested(context: dict, dotpath: str, value: str) -> None:
-    """Set a value at a dot-separated path into a nested dict."""
     parts = dotpath.split(".")
     current = context
     for part in parts[:-1]:
@@ -555,10 +671,6 @@ def _set_nested(context: dict, dotpath: str, value: str) -> None:
 
 
 def _render_template(template: str, context: dict) -> str:
-    """
-    Simple {namespace.field} substitution. Not Jinja.
-    Unknown references are left as empty string.
-    """
     def replace(m: re.Match) -> str:
         path = m.group(1).strip()
         val = _resolve_path(path, context)

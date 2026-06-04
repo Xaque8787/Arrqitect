@@ -1,9 +1,11 @@
 description: >
-  Read Prowlarr capabilities after Radarr installs.
-  If Prowlarr is not yet installed, the read step uses
-  on_error: continue so the job completes as DEGRADED
-  rather than FAILED. When Prowlarr installs later,
-  a reconcile job will run this hook again.
+  Register Radarr with Prowlarr after installation.
+  Runs at install time and as a reconcile hook whenever Prowlarr's
+  capabilities change (e.g. when the real API key is published).
+  Guards all API steps behind a when: condition so that if Prowlarr
+  is not yet ready (placeholder key), steps are skipped and the job
+  completes as DEGRADED. The reconciler fires again when Prowlarr
+  publishes the real key.
 
 steps:
   - id: read_prowlarr_api_key
@@ -14,10 +16,8 @@ steps:
     critical: false
     timeout_seconds: 10
     description: >
-      Read Prowlarr's API key from the capability registry.
-      If Prowlarr is not yet installed, this returns CONTINUE_SUCCESS
-      and the job completes as DEGRADED. A reconcile will fire
-      when Prowlarr publishes its capabilities.
+      Read Prowlarr's API key. If not found, returns CONTINUE_SUCCESS
+      (job = DEGRADED). Reconcile fires when Prowlarr publishes.
 
   - id: read_prowlarr_url
     type: registry_read
@@ -30,9 +30,59 @@ steps:
       - read_prowlarr_api_key
     description: Read Prowlarr's internal URL.
 
-  - id: log_prowlarr_status
-    type: log
-    message: "Radarr post-install: Prowlarr capability read complete"
+  - id: register_with_prowlarr
+    type: http_request
+    method: POST
+    url_template: "http://{registry.prowlarr_url}/api/v1/applications"
+    headers:
+      Content-Type: "application/json"
+      X-Api-Key: "{registry.prowlarr_api_key}"
+    body_template: >-
+      {
+        "name": "Radarr",
+        "syncLevel": "fullSync",
+        "implementationName": "Radarr",
+        "implementation": "Radarr",
+        "configContract": "RadarrSettings",
+        "fields": [
+          {"name": "prowlarrUrl", "value": "http://{registry.prowlarr_url}"},
+          {"name": "baseUrl", "value": "http://radarr:7878"},
+          {"name": "apiKey", "value": ""},
+          {"name": "syncCategories", "value": [2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060, 2070, 2080]}
+        ],
+        "tags": []
+      }
+    bind_response_json:
+      bind_as: radarr_prowlarr_app_id
+      path: "id"
+    when: "registry.prowlarr_api_key != 'pending_manual_setup'"
+    on_error: continue
+    critical: false
+    timeout_seconds: 30
     depends_on:
       - read_prowlarr_url
+    description: >
+      POST to Prowlarr's applications API to register Radarr.
+      Skipped when the API key is still the placeholder value.
+      Binds the returned application ID for use in pre_remove.
+
+  - id: store_app_id
+    type: registry_write
+    key: radarr.prowlarr_app_id
+    value_template: "{registry.radarr_prowlarr_app_id}"
+    when: "registry.prowlarr_api_key != 'pending_manual_setup'"
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    depends_on:
+      - register_with_prowlarr
+    description: >
+      Persist the Prowlarr application registration ID so
+      pre_remove can call DELETE /api/v1/applications/{id}.
+
+  - id: log_complete
+    type: log
+    message: "Radarr post-install: Prowlarr registration complete"
+    depends_on:
+      - store_app_id
     timeout_seconds: 5
