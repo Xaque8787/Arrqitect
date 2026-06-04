@@ -15,7 +15,7 @@ steps:
 
   - id: read_prowlarr_url
     type: registry_read
-    key: prowlarr.url_internal
+    key: prowlarr.url_external
     bind_as: prowlarr_url
     on_error: continue
     critical: false
