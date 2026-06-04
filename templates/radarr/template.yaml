@@ -51,6 +51,14 @@ services:
         behavior: persistent
 
 provides:
+  - key: radarr.api_key
+    type: credential
+    sensitive: true
+    rotates: false
+  - key: radarr.url_internal
+    type: endpoint
+    sensitive: false
+    rotates: false
   - key: radarr.prowlarr_app_id
     type: metadata
     sensitive: false

@@ -1,12 +1,60 @@
 description: >
-  Register Sonarr with Prowlarr after installation.
+  Publish Sonarr's own capabilities, then register with Prowlarr.
   Mirrors the Radarr post_install hook pattern exactly.
-  Guards all API steps behind a when: condition so that if Prowlarr
-  is not yet ready (placeholder key), steps are skipped and the job
-  completes as DEGRADED. The reconciler fires again when Prowlarr
-  publishes the real key.
+  Phase 1: wait for Sonarr's config.xml, extract and publish its real
+  API key and internal URL.
+  Phase 2: read Prowlarr's capabilities and register Sonarr as an
+  application, passing the real API key so Prowlarr can push syncs back.
 
 steps:
+  # --- Phase 1: publish own capabilities ---
+
+  - id: wait_for_config
+    type: wait_for_file
+    path_template: "{app.install_dir}/config/config.xml"
+    poll_interval_seconds: 5
+    timeout_seconds: 180
+    on_error: fail
+    critical: true
+    description: Block until Sonarr writes its config.xml on first boot.
+
+  - id: read_self_api_key
+    type: file_read
+    path_template: "{app.install_dir}/config/config.xml"
+    regex: "<ApiKey>(.*?)</ApiKey>"
+    group: 1
+    bind_as: sonarr_self_api_key
+    on_error: fail
+    critical: true
+    timeout_seconds: 10
+    depends_on:
+      - wait_for_config
+    description: Extract Sonarr's own API key from its config file.
+
+  - id: publish_self_api_key
+    type: registry_write
+    key: sonarr.api_key
+    value_template: "{registry.sonarr_self_api_key}"
+    on_error: fail
+    critical: true
+    timeout_seconds: 10
+    depends_on:
+      - read_self_api_key
+    description: Publish Sonarr's own API key so consumers can authenticate to it.
+
+  - id: publish_self_url
+    type: registry_write
+    key: sonarr.url_internal
+    value_template: "sonarr:8989"
+    on_error: fail
+    critical: true
+    timeout_seconds: 10
+    depends_on:
+      - publish_self_api_key
+    description: Publish Sonarr's internal Docker network URL.
+
+  # --- Phase 2: register with Prowlarr ---
+
   - id: read_prowlarr_api_key
     type: registry_read
     key: prowlarr.api_key
@@ -14,6 +62,8 @@ steps:
     on_error: continue
     critical: false
     timeout_seconds: 10
+    depends_on:
+      - publish_self_url
     description: >
       Read Prowlarr's API key. If not found, returns CONTINUE_SUCCESS
       (job = DEGRADED). Reconcile fires when Prowlarr publishes.
@@ -27,7 +77,6 @@ steps:
     timeout_seconds: 10
     depends_on:
       - read_prowlarr_api_key
-    description: Read Prowlarr's internal URL.
 
   - id: register_with_prowlarr
     type: http_request
@@ -46,7 +95,7 @@ steps:
         "fields": [
           {"name": "prowlarrUrl", "value": "http://{registry.prowlarr_url}"},
           {"name": "baseUrl", "value": "http://sonarr:8989"},
-          {"name": "apiKey", "value": ""},
+          {"name": "apiKey", "value": "{registry.sonarr_self_api_key}"},
           {"name": "syncCategories", "value": [5000, 5010, 5020, 5030, 5040, 5045, 5050, 5060, 5070, 5080]}
         ],
         "tags": []
@@ -54,34 +103,31 @@ steps:
     bind_response_json:
       bind_as: sonarr_prowlarr_app_id
       path: "id"
-    when: "registry.prowlarr_api_key != 'pending_manual_setup'"
+    when: "registry.prowlarr_api_key != ''"
     on_error: continue
     critical: false
     timeout_seconds: 30
     depends_on:
       - read_prowlarr_url
     description: >
-      POST to Prowlarr's applications API to register Sonarr.
-      Skipped when the API key is still the placeholder value.
-      Binds the returned application ID for use in pre_remove.
+      POST to Prowlarr's applications API to register Sonarr, passing
+      the real API key so Prowlarr can authenticate back for index sync.
 
   - id: store_app_id
     type: registry_write
     key: sonarr.prowlarr_app_id
     value_template: "{registry.sonarr_prowlarr_app_id}"
-    when: "registry.prowlarr_api_key != 'pending_manual_setup'"
+    when: "registry.prowlarr_api_key != ''"
     on_error: continue
     critical: false
     timeout_seconds: 10
     depends_on:
       - register_with_prowlarr
-    description: >
-      Persist the Prowlarr application registration ID so
-      pre_remove can call DELETE /api/v1/applications/{id}.
+    description: Persist the registration ID for use in pre_remove.
 
   - id: log_complete
     type: log
-    message: "Sonarr post-install: Prowlarr registration complete"
+    message: "Sonarr post-install: own capabilities published and Prowlarr registration complete"
     depends_on:
       - store_app_id
     timeout_seconds: 5
