@@ -10,12 +10,9 @@ Idempotent — existing template versions with matching content hashes are
 skipped silently.
 """
 
-import json
-import secrets
 from pathlib import Path
 
 from app.db.client import get_sync_conn
-from app.services.ecb.parser import parse_template, PassthroughTemplate, ParseError
 from app.services.template_sync import _ingest_template, ImmutabilityViolation
 
 TEMPLATES_DIR = Path(__file__).parent.parent.parent / "templates"
@@ -36,17 +33,28 @@ def seed_templates() -> None:
             source_url = str(yaml_file)
             actions_file = template_dir / "actions.yaml"
             actions_text = actions_file.read_text() if actions_file.exists() else ""
+            if actions_text:
+                print(f"[seeder] {template_dir.name}: found actions.yaml ({len(actions_text)} chars)")
             try:
                 result = _ingest_template(raw_text, source_url, conn, actions_text)
                 checked += 1
                 status = result.get("status", "?")
                 slug = result.get("slug", template_dir.name)
-                if status != "unchanged":
-                    print(f"[seeder] {slug}: {status}")
+                print(f"[seeder] {slug}: {status}")
+                # Verify actions stored correctly
+                row = conn.execute(
+                    "SELECT length(actions_definitions) FROM template_versions "
+                    "WHERE template_id = (SELECT id FROM app_templates WHERE slug = ?)",
+                    (slug,),
+                ).fetchone()
+                if row:
+                    print(f"[seeder] {slug}: actions_definitions stored ({row[0]} chars)")
             except ImmutabilityViolation as exc:
                 print(f"[seeder] {template_dir.name}: immutability violation — {exc}")
             except Exception as exc:
+                import traceback
                 print(f"[seeder] {template_dir.name}: error — {exc}")
+                traceback.print_exc()
 
         conn.commit()
         print(f"[seeder] Templates seeded ({checked} checked)")

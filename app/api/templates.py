@@ -86,36 +86,29 @@ async def trigger_sync(req: SyncRequest = SyncRequest()):
 @router.get("/{slug}/actions")
 async def get_template_actions(slug: str):
     async with get_db() as db:
-        async with db.execute(
-            "SELECT id, latest_version FROM app_templates WHERE slug = ?", (slug,)
-        ) as cur:
-            tmpl = await cur.fetchone()
-
-    if not tmpl:
-        raise HTTPException(status_code=404, detail="Template not found")
-
-    async with get_db() as db:
-        # Try latest_version first, then fall back to most recently created version
-        target_version = tmpl["latest_version"] or None
-        if target_version:
-            async with db.execute("""
-                SELECT actions_definitions FROM template_versions
-                WHERE template_id = ? AND version = ?
-            """, (tmpl["id"], target_version)) as cur:
-                row = await cur.fetchone()
-        else:
-            async with db.execute("""
-                SELECT actions_definitions FROM template_versions
-                WHERE template_id = ?
-                ORDER BY created_at DESC LIMIT 1
-            """, (tmpl["id"],)) as cur:
-                row = await cur.fetchone()
+        # Single query: look up the latest version for the slug
+        async with db.execute("""
+            SELECT v.actions_definitions, v.version, t.latest_version
+            FROM app_templates t
+            LEFT JOIN template_versions v ON v.template_id = t.id
+            WHERE t.slug = ?
+            ORDER BY v.created_at DESC
+            LIMIT 1
+        """, (slug,)) as cur:
+            row = await cur.fetchone()
 
     if not row:
-        return {"actions": []}
+        import logging
+        logging.getLogger("arrqitect").warning("actions: template %r not found in DB", slug)
+        raise HTTPException(status_code=404, detail="Template not found")
 
     raw = row[0] or ""
     if not raw:
+        import logging
+        logging.getLogger("arrqitect").info(
+            "actions: template %r has empty actions_definitions (version=%r, latest=%r)",
+            slug, row[1], row[2]
+        )
         return {"actions": []}
 
     try:

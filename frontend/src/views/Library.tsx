@@ -464,8 +464,9 @@ function ActionsStep({
   );
 }
 
-function InstallModal({ template, composeBase, onClose, onInstalled }: {
+function InstallModal({ template, actionsSchema, composeBase, onClose, onInstalled }: {
   template: AppTemplate;
+  actionsSchema: ActionsSchema | null;
   composeBase: string | null;
   onClose: () => void;
   onInstalled: () => void;
@@ -480,18 +481,9 @@ function InstallModal({ template, composeBase, onClose, onInstalled }: {
   const [customEnv, setCustomEnv] = useState<CustomEnvEntry[]>([]);
   const [customStorage, setCustomStorage] = useState<CustomStorageEntry[]>([]);
   const [queuedActions, setQueuedActions] = useState<QueuedAction[]>([]);
-  const [actionsSchema, setActionsSchema] = useState<ActionsSchema | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
-
-  useEffect(() => {
-    api.templates.actions(template.slug).then(schema => {
-      if (schema.actions && schema.actions.length > 0) setActionsSchema(schema);
-    }).catch(err => {
-      console.warn("[actions] failed to load actions schema:", err);
-    });
-  }, [template.slug]);
 
   const visibleFields = template.config_schema.filter(f => (f.visibility ?? "visible") === "visible");
   const advancedFields = template.config_schema.filter(f => (f.visibility ?? "visible") === "advanced");
@@ -685,6 +677,8 @@ export default function Library() {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [installing, setInstalling] = useState<AppTemplate | null>(null);
+  const [installingActions, setInstallingActions] = useState<ActionsSchema | null>(null);
+  const [loadingInstall, setLoadingInstall] = useState<string | null>(null);
   const [composeBase, setComposeBase] = useState<string | null>(null);
 
   useEffect(() => {
@@ -697,6 +691,19 @@ export default function Library() {
   function loadTemplates() {
     setLoading(true);
     api.templates.list().then(setTemplates).finally(() => setLoading(false));
+  }
+
+  async function handleClickInstall(tmpl: AppTemplate) {
+    setLoadingInstall(tmpl.id);
+    try {
+      const schema = await api.templates.actions(tmpl.slug);
+      setInstallingActions((schema.actions && schema.actions.length > 0) ? schema : null);
+    } catch {
+      setInstallingActions(null);
+    } finally {
+      setLoadingInstall(null);
+      setInstalling(tmpl);
+    }
   }
 
   async function handleSync() {
@@ -777,8 +784,12 @@ export default function Library() {
                     <span key={p.key} className="tag">{p.key}</span>
                   ))}
                 </div>
-                <button className="btn btn-primary btn-sm" onClick={() => setInstalling(tmpl)}>
-                  Install
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={() => handleClickInstall(tmpl)}
+                  disabled={loadingInstall === tmpl.id}
+                >
+                  {loadingInstall === tmpl.id ? <span className="spinner" style={{ width: 12, height: 12 }} /> : "Install"}
                 </button>
               </div>
             </div>
@@ -789,9 +800,10 @@ export default function Library() {
       {installing && (
         <InstallModal
           template={installing}
+          actionsSchema={installingActions}
           composeBase={composeBase}
-          onClose={() => setInstalling(null)}
-          onInstalled={() => setInstalling(null)}
+          onClose={() => { setInstalling(null); setInstallingActions(null); }}
+          onInstalled={() => { setInstalling(null); setInstallingActions(null); }}
         />
       )}
     </div>
