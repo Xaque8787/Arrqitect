@@ -42,6 +42,9 @@ async def _build_exec_context(app_id: str) -> dict:
         if len(parts) == 2:
             exec_context["registry"][parts[1]] = value
         exec_context["registry"][key] = value
+        # Also store with dots replaced by underscores so templates can use
+        # <<registry.prowlarr_url_external>> to reference prowlarr.url_external
+        exec_context["registry"][key.replace(".", "_")] = value
 
     # Also load consumed registry values (prowlarr.api_key etc.)
     async with get_db() as db:
@@ -83,6 +86,7 @@ async def _build_exec_context(app_id: str) -> dict:
                     if len(parts) == 2:
                         exec_context["registry"][parts[1]] = value
                     exec_context["registry"][key] = value
+                    exec_context["registry"][key.replace(".", "_")] = value
 
     return exec_context
 
