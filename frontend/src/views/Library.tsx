@@ -313,12 +313,10 @@ function ActionFieldInput({
 }
 
 function VariantFormModal({
-  actionDef,
   variantDef,
   onAdd,
   onClose,
 }: {
-  actionDef: ActionDef;
   variantDef: ActionVariantDef;
   onAdd: (fields: Record<string, string>) => void;
   onClose: () => void;
@@ -448,7 +446,6 @@ function ActionsStep({
 
       {pickingVariant && (
         <VariantFormModal
-          actionDef={pickingVariant.action}
           variantDef={pickingVariant.variant}
           onAdd={fields => {
             onChange([...queued, {
