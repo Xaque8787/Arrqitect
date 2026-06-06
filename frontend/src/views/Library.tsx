@@ -487,8 +487,10 @@ function InstallModal({ template, composeBase, onClose, onInstalled }: {
 
   useEffect(() => {
     api.templates.actions(template.slug).then(schema => {
-      if (schema.actions.length > 0) setActionsSchema(schema);
-    }).catch(() => {});
+      if (schema.actions && schema.actions.length > 0) setActionsSchema(schema);
+    }).catch(err => {
+      console.warn("[actions] failed to load actions schema:", err);
+    });
   }, [template.slug]);
 
   const visibleFields = template.config_schema.filter(f => (f.visibility ?? "visible") === "visible");

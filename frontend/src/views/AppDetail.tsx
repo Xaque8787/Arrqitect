@@ -719,8 +719,10 @@ function AppActionsSection({ app }: { app: InstalledApp }) {
   useEffect(() => {
     load();
     api.templates.actions(slug).then(s => {
-      if (s.actions.length > 0) setSchema(s);
-    }).catch(() => {});
+      if (s.actions && s.actions.length > 0) setSchema(s);
+    }).catch(err => {
+      console.warn("[actions] failed to load actions schema:", err);
+    });
   }, [app.id, slug]);
 
   if (!schema && actions.length === 0) return null;

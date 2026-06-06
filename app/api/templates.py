@@ -86,16 +86,33 @@ async def trigger_sync(req: SyncRequest = SyncRequest()):
 @router.get("/{slug}/actions")
 async def get_template_actions(slug: str):
     async with get_db() as db:
-        async with db.execute("""
-            SELECT v.actions_definitions
-            FROM app_templates t
-            JOIN template_versions v ON v.template_id = t.id AND v.version = t.latest_version
-            WHERE t.slug = ?
-        """, (slug,)) as cur:
-            row = await cur.fetchone()
+        async with db.execute(
+            "SELECT id, latest_version FROM app_templates WHERE slug = ?", (slug,)
+        ) as cur:
+            tmpl = await cur.fetchone()
+
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    async with get_db() as db:
+        # Try latest_version first, then fall back to most recently created version
+        target_version = tmpl["latest_version"] or None
+        if target_version:
+            async with db.execute("""
+                SELECT actions_definitions FROM template_versions
+                WHERE template_id = ? AND version = ?
+            """, (tmpl["id"], target_version)) as cur:
+                row = await cur.fetchone()
+        else:
+            async with db.execute("""
+                SELECT actions_definitions FROM template_versions
+                WHERE template_id = ?
+                ORDER BY created_at DESC LIMIT 1
+            """, (tmpl["id"],)) as cur:
+                row = await cur.fetchone()
 
     if not row:
-        raise HTTPException(status_code=404, detail="Template not found")
+        return {"actions": []}
 
     raw = row[0] or ""
     if not raw:
