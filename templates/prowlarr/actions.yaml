@@ -1,0 +1,98 @@
+actions:
+  - id: add_indexer
+    label: Add Indexer
+    description: Add a search indexer to Prowlarr
+    method: POST
+    url_template: "http://<<registry.prowlarr_url_external>>/api/v1/indexer"
+    headers:
+      Content-Type: application/json
+      X-Api-Key: "<<registry.prowlarr_api_key>>"
+    idempotency_check:
+      url_template: "http://<<registry.prowlarr_url_external>>/api/v1/indexer"
+      headers:
+        X-Api-Key: "<<registry.prowlarr_api_key>>"
+      match_field: definitionName
+    variants:
+      - id: yts
+        label: YTS
+        description: HD movies, compact file sizes
+        idempotency_value: yts
+        body_template: >-
+          {"name":"<<field.name>>","enable":<<field.enable>>,"priority":<<field.priority>>,"appProfileId":1,"protocol":"torrent","privacy":"public","tags":[],"definitionName":"yts","implementationName":"Cardigann","implementation":"Cardigann","configContract":"CardigannSettings","fields":[{"name":"definitionFile","value":"yts"},{"name":"baseUrl","value":"<<field.baseUrl>>"},{"name":"torrentBaseSettings.preferMagnetUrl","value":<<field.preferMagnetUrl>>},{"name":"torrentBaseSettings.seedRatio"},{"name":"apiurl","value":"movies-api.accel.li"}]}
+        fields:
+          - id: name
+            label: Name
+            type: text
+            default: YTS
+          - id: enable
+            label: Enabled
+            type: boolean
+            default: "true"
+          - id: baseUrl
+            label: Base URL
+            type: select
+            options:
+              - https://yts.bz/
+              - https://yts.proxyninja.org/
+            allow_custom: true
+            default: https://yts.bz/
+          - id: priority
+            label: Priority
+            type: number
+            default: "25"
+            visibility: advanced
+          - id: preferMagnetUrl
+            label: Prefer Magnet URL
+            type: boolean
+            default: "false"
+            visibility: advanced
+
+      - id: nyaasi
+        label: Nyaa.si
+        description: Anime and manga torrents
+        idempotency_value: nyaasi
+        body_template: >-
+          {"name":"<<field.name>>","enable":<<field.enable>>,"priority":<<field.priority>>,"appProfileId":1,"protocol":"torrent","privacy":"public","tags":[],"definitionName":"nyaasi","implementationName":"Cardigann","implementation":"Cardigann","configContract":"CardigannSettings","fields":[{"name":"definitionFile","value":"nyaasi"},{"name":"baseUrl","value":"<<field.baseUrl>>"}]}
+        fields:
+          - id: name
+            label: Name
+            type: text
+            default: Nyaa.si
+          - id: enable
+            label: Enabled
+            type: boolean
+            default: "true"
+          - id: baseUrl
+            label: Base URL
+            type: text
+            default: https://nyaa.si/
+          - id: priority
+            label: Priority
+            type: number
+            default: "25"
+            visibility: advanced
+
+      - id: thepiratebay
+        label: The Pirate Bay
+        description: General purpose torrent indexer
+        idempotency_value: thepiratebay
+        body_template: >-
+          {"name":"<<field.name>>","enable":<<field.enable>>,"priority":<<field.priority>>,"appProfileId":1,"protocol":"torrent","privacy":"public","tags":[],"definitionName":"thepiratebay","implementationName":"Cardigann","implementation":"Cardigann","configContract":"CardigannSettings","fields":[{"name":"definitionFile","value":"thepiratebay"},{"name":"baseUrl","value":"<<field.baseUrl>>"}]}
+        fields:
+          - id: name
+            label: Name
+            type: text
+            default: The Pirate Bay
+          - id: enable
+            label: Enabled
+            type: boolean
+            default: "true"
+          - id: baseUrl
+            label: Base URL
+            type: text
+            default: https://thepiratebay.org/
+          - id: priority
+            label: Priority
+            type: number
+            default: "25"
+            visibility: advanced

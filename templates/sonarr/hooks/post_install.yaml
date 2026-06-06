@@ -5,6 +5,8 @@ description: >
   API key and internal URL.
   Phase 2: read Prowlarr's capabilities and register Sonarr as an
   application, passing the real API key so Prowlarr can push syncs back.
+  On reconcile, read_existing_app_id short-circuits re-registration when
+  the ID is already stored.
 
 steps:
   # --- Phase 1: publish own capabilities ---
@@ -70,6 +72,19 @@ steps:
 
   # --- Phase 2: register with Prowlarr ---
 
+  - id: read_existing_app_id
+    type: registry_read
+    key: sonarr.prowlarr_app_id
+    bind_as: existing_prowlarr_app_id
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    depends_on:
+      - publish_self_url_external
+    description: >
+      Read persisted Prowlarr registration ID. Empty means not yet registered.
+      Skips re-registration on reconcile when the ID is already stored.
+
   - id: read_prowlarr_api_key
     type: registry_read
     key: prowlarr.api_key
@@ -78,7 +93,7 @@ steps:
     critical: false
     timeout_seconds: 10
     depends_on:
-      - publish_self_url_external
+      - read_existing_app_id
     description: >
       Read Prowlarr's API key. If not found, returns CONTINUE_SUCCESS
       (job = DEGRADED). Reconcile fires when Prowlarr publishes.
@@ -120,7 +135,7 @@ steps:
     bind_response_json:
       bind_as: sonarr_prowlarr_app_id
       path: "id"
-    when: "registry.prowlarr_api_key != ''"
+    when: "registry.prowlarr_api_key != '' and registry.existing_prowlarr_app_id == ''"
     on_error: continue
     critical: false
     timeout_seconds: 30
@@ -128,8 +143,7 @@ steps:
       - read_prowlarr_url_external
     description: >
       POST to Prowlarr's applications API to register Sonarr.
-      url_template uses url_external (host-reachable); prowlarrUrl in
-      the body uses url_internal (Docker-reachable) so Sonarr can sync.
+      Guarded by when: skips on reconcile if already registered.
 
   - id: store_app_id
     type: registry_write

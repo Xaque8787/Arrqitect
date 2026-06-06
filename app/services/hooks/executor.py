@@ -87,6 +87,12 @@ import yaml
 from app.db.client import get_db
 from app.models.enums import StepStatus, DEPENDENCY_SATISFYING
 from app.services.hooks.when_parser import parse_when, WhenParseError
+from app.services.hooks.helpers import (
+    render_template as _render_template,
+    resolve_path as _resolve_path,
+    set_nested as _set_nested,
+    record_step as _record_step,
+)
 
 
 def _now() -> str:
@@ -659,67 +665,9 @@ def _topological_sort(steps: list[_StepDef]) -> tuple[list[str], str | None]:
     return order, None
 
 
-# --- context helpers ---
-
-def _set_nested(context: dict, dotpath: str, value: str) -> None:
-    parts = dotpath.split(".")
-    current = context
-    for part in parts[:-1]:
-        if part not in current or not isinstance(current[part], dict):
-            current[part] = {}
-        current = current[part]
-    current[parts[-1]] = value
-
-
-def _render_template(template: str, context: dict) -> str:
-    def replace(m: re.Match) -> str:
-        path = m.group(1).strip()
-        val = _resolve_path(path, context)
-        return str(val) if val is not None else ""
-    return re.sub(r"<<([^>]+)>>", replace, template)
-
-
-def _resolve_path(dotpath: str, context: dict) -> str | None:
-    parts = dotpath.split(".")
-    current = context
-    for part in parts:
-        if not isinstance(current, dict):
-            return None
-        current = current.get(part)
-        if current is None:
-            return None
-    return current
-
-
 def _infer_capability_type(key: str) -> str:
     if "api_key" in key or "password" in key or "secret" in key or "token" in key:
         return "credential"
     if "url" in key or "host" in key or "port" in key:
         return "endpoint"
     return "metadata"
-
-
-async def _record_step(
-    job_id: str,
-    step_name: str,
-    status: StepStatus,
-    log: str,
-    broadcast: Callable[[str, str], Awaitable[None]] | None,
-) -> None:
-    if not job_id:
-        return
-    step_id = secrets.token_hex(16)
-    now = _now()
-    async with get_db() as db:
-        await db.execute("""
-            INSERT INTO job_steps (id, job_id, step, status, log, started_at, finished_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (step_id, job_id, step_name, status.value, log, now, now))
-        await db.commit()
-    if broadcast:
-        await broadcast(job_id, json.dumps({
-            "type": "step",
-            "step": step_name,
-            "status": status.value,
-            "log": log,
-        }))

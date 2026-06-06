@@ -15,11 +15,12 @@ Schema version dispatch:
 Flow per template:
   1. Fetch index.json  → list of slugs + paths
   2. For each slug: fetch template.yaml
-  3. Validate (schema_version dispatch)
-  4. Compute content_hash over canonical payload
-  5. Skip if (template_id, version) + same hash already exists (no-op)
-  6. Reject overwrite if same (template_id, version) but different hash
-  7. Write new template_version row; update app_templates catalog row
+  3. Optionally fetch actions.yaml from the same directory (non-fatal if absent)
+  4. Validate (schema_version dispatch)
+  5. Compute content_hash over canonical payload
+  6. Skip if (template_id, version) + same hash already exists (no-op)
+  7. Reject overwrite if same (template_id, version) but different hash
+  8. Write new template_version row; update app_templates catalog row
 """
 
 import hashlib
@@ -77,7 +78,32 @@ def _fetch_text(url_or_path: str, client: httpx.Client | None) -> str:
     return Path(url_or_path).read_text()
 
 
-def _ingest_template(raw_text: str, source_url: str, conn) -> dict:
+def _fetch_text_optional(url_or_path: str, client: httpx.Client | None) -> str | None:
+    """Fetch text without raising — returns None if not found or any error."""
+    try:
+        if url_or_path.startswith("http://") or url_or_path.startswith("https://"):
+            resp = client.get(url_or_path, timeout=10)
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.text
+        from pathlib import Path
+        p = Path(url_or_path)
+        return p.read_text() if p.exists() else None
+    except Exception:
+        return None
+
+
+def _actions_url(template_url: str) -> str:
+    """Derive the actions.yaml URL/path from the template.yaml URL/path."""
+    if template_url.startswith("http://") or template_url.startswith("https://"):
+        base = template_url.rsplit("/", 1)[0]
+        return f"{base}/actions.yaml"
+    from pathlib import Path
+    return str(Path(template_url).parent / "actions.yaml")
+
+
+def _ingest_template(raw_text: str, source_url: str, conn, actions_text: str | None = None) -> dict:
     """
     Validate, hash, and write one template version into the DB.
     Dispatches on schema_version.
@@ -90,14 +116,14 @@ def _ingest_template(raw_text: str, source_url: str, conn) -> dict:
     sv = raw.get("schema_version", 1)
 
     if sv == 2:
-        return _ingest_v2(raw_text, raw, source_url, conn)
+        return _ingest_v2(raw_text, raw, source_url, conn, actions_text or "")
     elif sv == 1:
-        return _ingest_v1(raw, source_url, conn)
+        return _ingest_v1(raw, source_url, conn, actions_text or "")
     else:
         raise SyncError(f"Unsupported schema_version: {sv!r}")
 
 
-def _ingest_v2(raw_text: str, raw: dict, source_url: str, conn) -> dict:
+def _ingest_v2(raw_text: str, raw: dict, source_url: str, conn, actions_text: str) -> dict:
     """Ingest a schema_version 2 template via ECB parser."""
     try:
         template_model = parse_template(raw_text)
@@ -151,6 +177,12 @@ def _ingest_v2(raw_text: str, raw: dict, source_url: str, conn) -> dict:
                 "UPDATE app_templates SET latest_version = ? WHERE id = ?",
                 (version, template_id),
             )
+            # Update actions_definitions even when content unchanged (actions.yaml can evolve independently)
+            if actions_text:
+                conn.execute(
+                    "UPDATE template_versions SET actions_definitions = ? WHERE id = ?",
+                    (actions_text, existing_ver[0]),
+                )
             return {"slug": slug, "version": version, "status": "unchanged"}
         raise ImmutabilityViolation(
             f"{slug}@{version} already published with a different content hash. "
@@ -162,12 +194,12 @@ def _ingest_v2(raw_text: str, raw: dict, source_url: str, conn) -> dict:
         INSERT INTO template_versions
             (id, template_id, version, schema_version, content_hash,
              compose, config_schema, hook_definitions, provides, consumes,
-             service_definitions, has_passthrough)
-        VALUES (?, ?, ?, 2, ?, '', ?, ?, ?, ?, ?, 0)
+             service_definitions, has_passthrough, actions_definitions)
+        VALUES (?, ?, ?, 2, ?, '', ?, ?, ?, ?, ?, 0, ?)
     """, (
         version_id, template_id, version, content_hash,
         config_schema_json, hooks_json, provides_json, consumes_json,
-        service_definitions,
+        service_definitions, actions_text,
     ))
 
     conn.execute(
@@ -178,7 +210,7 @@ def _ingest_v2(raw_text: str, raw: dict, source_url: str, conn) -> dict:
     return {"slug": slug, "version": version, "status": "added"}
 
 
-def _ingest_v1(raw: dict, source_url: str, conn) -> dict:
+def _ingest_v1(raw: dict, source_url: str, conn, actions_text: str) -> dict:
     """Ingest a schema_version 1 (legacy passthrough) template."""
     _validate_v1(raw)
 
@@ -219,6 +251,11 @@ def _ingest_v1(raw: dict, source_url: str, conn) -> dict:
                 "UPDATE app_templates SET latest_version = ? WHERE id = ?",
                 (version, template_id),
             )
+            if actions_text:
+                conn.execute(
+                    "UPDATE template_versions SET actions_definitions = ? WHERE id = ?",
+                    (actions_text, existing_ver[0]),
+                )
             return {"slug": slug, "version": version, "status": "unchanged"}
         raise ImmutabilityViolation(
             f"{slug}@{version} already published with a different content hash. "
@@ -230,8 +267,8 @@ def _ingest_v1(raw: dict, source_url: str, conn) -> dict:
         INSERT INTO template_versions
             (id, template_id, version, schema_version, content_hash,
              compose, config_schema, hook_definitions, provides, consumes,
-             service_definitions, has_passthrough)
-        VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, '', 1)
+             service_definitions, has_passthrough, actions_definitions)
+        VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, '', 1, ?)
     """, (
         version_id, template_id, version, content_hash,
         raw["compose"],
@@ -239,6 +276,7 @@ def _ingest_v1(raw: dict, source_url: str, conn) -> dict:
         json.dumps(raw.get("hooks", {})),
         json.dumps(raw.get("provides", [])),
         json.dumps(raw.get("consumes", [])),
+        actions_text,
     ))
 
     conn.execute(
@@ -332,7 +370,8 @@ def sync_templates(repo_url: str | None = None) -> dict:
                     template_url = f"{repo_url}/{path}"
                     try:
                         raw_text = _fetch_text(template_url, client)
-                        result = _ingest_template(raw_text, template_url, conn)
+                        actions_text = _fetch_text_optional(_actions_url(template_url), client)
+                        result = _ingest_template(raw_text, template_url, conn, actions_text)
                         results.append(result)
                     except ImmutabilityViolation as exc:
                         errors.append({"slug": slug, "error": str(exc)})

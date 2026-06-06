@@ -1,35 +1,34 @@
 """
-WhenParser — Phase 1 frozen grammar.
+WhenParser — Phase 3 extended grammar.
 
-Accepted grammar (exactly):
-    <namespace>.<field> (==|!=) '<literal>'
+Accepted grammar:
+    Simple:
+        <namespace>.<field> (==|!=) '<literal>'
+
+    Compound (exactly one 'and'):
+        <simple> and <simple>
 
 Examples:
     registry.radarr.url_internal == 'present'
     reconcile.event_type == 'removed'
-    reconcile.event_type != 'changed'
+    registry.prowlarr_api_key != '' and registry.existing_prowlarr_app_id == ''
 
-Everything else is a parse error. No Jinja, no boolean operators,
-no numeric comparisons, no method calls.
-
-The platform does not implement a general expression language.
-This grammar is intentionally minimal — it covers the only cases
-needed in Phase 1 without opening a path to arbitrary evaluation.
+No Jinja, no 'or', no parentheses, no numeric comparisons, no method calls.
+This grammar is intentionally minimal — it covers exactly what Phase 3 hooks need.
 """
 
 from __future__ import annotations
 import re
 from dataclasses import dataclass
+from typing import Union
 
 
-# Strict pattern: <one_or_more_word_segments_with_dots> (==|!=) '<literal>'
-# The left side allows exactly one dot-separated identifier path.
-# The right side must be a single-quoted string literal.
-_PATTERN = re.compile(
+# Single condition pattern: <dot.path> (==|!=) '<literal>'
+_SINGLE = re.compile(
     r"^\s*"
-    r"([\w][\w.]*[\w]|[\w]+)"   # lhs: dot-separated identifier, no leading/trailing dot
+    r"([\w][\w.]*[\w]|[\w]+)"   # lhs: dot-separated identifier
     r"\s*(==|!=)\s*"             # operator
-    r"'([^']*)'"                 # rhs: single-quoted literal (no embedded single quotes)
+    r"'([^']*)'"                 # rhs: single-quoted literal
     r"\s*$"
 )
 
@@ -40,19 +39,13 @@ class WhenParseError(Exception):
 
 @dataclass(frozen=True)
 class WhenExpr:
-    lhs: str        # e.g. "registry.radarr.url_internal"
-    op: str         # "==" or "!="
-    rhs: str        # literal value, e.g. "present"
+    lhs: str
+    op: str
+    rhs: str
 
     def evaluate(self, context: dict) -> bool:
-        """
-        Evaluate against a flat context dict.
-        The lhs is resolved by walking dot-separated segments into nested dicts.
-        Returns False (not True) if any segment is absent — absent = condition false.
-        """
         value = _resolve_path(self.lhs, context)
         if value is None:
-            # Missing path → condition is false (not an error at evaluation time)
             return False
         actual = str(value)
         if self.op == "==":
@@ -60,27 +53,44 @@ class WhenExpr:
         return actual != self.rhs
 
 
-def parse_when(expr: str) -> WhenExpr:
-    """
-    Parse a when: expression string into a WhenExpr.
-    Raises WhenParseError if the expression does not match the frozen grammar.
-    """
-    m = _PATTERN.match(expr)
+@dataclass(frozen=True)
+class WhenAndExpr:
+    left: WhenExpr
+    right: WhenExpr
+
+    def evaluate(self, context: dict) -> bool:
+        return self.left.evaluate(context) and self.right.evaluate(context)
+
+
+def _parse_single(expr: str) -> WhenExpr:
+    m = _SINGLE.match(expr)
     if not m:
         raise WhenParseError(
-            f"Invalid when: expression {expr!r}. "
-            "Accepted grammar: <namespace>.<field> (==|!=) '<literal>'. "
-            "Jinja expressions and complex conditions are not supported."
+            f"Invalid when: condition {expr!r}. "
+            "Accepted grammar: <namespace>.<field> (==|!=) '<literal>'"
         )
-    lhs, op, rhs = m.group(1), m.group(2), m.group(3)
-    # Additional guard: reject expressions that look like Jinja
+    return WhenExpr(lhs=m.group(1), op=m.group(2), rhs=m.group(3))
+
+
+def parse_when(expr: str) -> Union[WhenExpr, WhenAndExpr]:
+    """
+    Parse a when: expression string.
+    Raises WhenParseError if the expression does not match the frozen grammar.
+    """
     if "{{" in expr or "}}" in expr:
         raise WhenParseError(
             f"Invalid when: expression {expr!r}. "
-            "Jinja-style expressions ({{ }}) are not supported. "
-            "Use the grammar: <namespace>.<field> (==|!=) '<literal>'"
+            "Jinja-style expressions ({{ }}) are not supported."
         )
-    return WhenExpr(lhs=lhs, op=op, rhs=rhs)
+
+    # Split on ' and ' (with surrounding spaces) — handles exactly one conjunction
+    and_parts = re.split(r"\s+and\s+", expr, maxsplit=1)
+    if len(and_parts) == 2:
+        left = _parse_single(and_parts[0].strip())
+        right = _parse_single(and_parts[1].strip())
+        return WhenAndExpr(left=left, right=right)
+
+    return _parse_single(expr.strip())
 
 
 def _resolve_path(dotpath: str, context: dict) -> str | None:

@@ -153,11 +153,50 @@ export interface SyncResult {
   repo_url?: string;
 }
 
+export interface ActionFieldDef {
+  id: string;
+  label: string;
+  type: "text" | "boolean" | "number" | "select";
+  default: string;
+  options?: string[];
+  allow_custom?: boolean;
+  visibility?: "visible" | "advanced";
+}
+
+export interface ActionVariantDef {
+  id: string;
+  label: string;
+  description?: string;
+  idempotency_value?: string;
+  fields: ActionFieldDef[];
+}
+
+export interface ActionDef {
+  id: string;
+  label: string;
+  description?: string;
+  variants: ActionVariantDef[];
+}
+
+export interface ActionsSchema {
+  actions: ActionDef[];
+}
+
+export interface AppActionRecord {
+  id: string;
+  app_id: string;
+  action_id: string;
+  variant_id: string;
+  fields: Record<string, string>;
+  created_at?: string;
+}
+
 export const api = {
   templates: {
     list: () => req<AppTemplate[]>("/api/templates"),
     get: (slug: string) => req<AppTemplate>(`/api/templates/${slug}`),
     versions: (slug: string) => req<TemplateVersion[]>(`/api/templates/${slug}/versions`),
+    actions: (slug: string) => req<ActionsSchema>(`/api/templates/${slug}/actions`),
     sync: (repo_url?: string) =>
       req<SyncResult>("/api/templates/sync", {
         method: "POST",
@@ -167,10 +206,16 @@ export const api = {
   apps: {
     list: () => req<InstalledApp[]>("/api/apps"),
     get: (id: string) => req<InstalledApp>(`/api/apps/${id}`),
-    install: (template_slug: string, name: string, config: Record<string, unknown>, version?: string) =>
+    install: (
+      template_slug: string,
+      name: string,
+      config: Record<string, unknown>,
+      version?: string,
+      actions?: { action_id: string; variant_id: string; fields: Record<string, string> }[],
+    ) =>
       req<{ app: InstalledApp; job: Job }>("/api/apps", {
         method: "POST",
-        body: JSON.stringify({ template_slug, name, config, version: version ?? null }),
+        body: JSON.stringify({ template_slug, name, config, version: version ?? null, actions: actions ?? [] }),
       }),
     updateConfig: (id: string, config: Record<string, unknown>) =>
       req<{ job: Job }>(`/api/apps/${id}/config`, {
@@ -180,6 +225,16 @@ export const api = {
     remove: (id: string) =>
       req<{ job: Job }>(`/api/apps/${id}`, { method: "DELETE" }),
     preview: (id: string) => req<PreviewResult>(`/api/apps/${id}/preview`, { method: "POST" }),
+    listActions: (id: string) => req<AppActionRecord[]>(`/api/apps/${id}/actions`),
+    createAction: (id: string, action_id: string, variant_id: string, fields: Record<string, string>) =>
+      req<AppActionRecord>(`/api/apps/${id}/actions`, {
+        method: "POST",
+        body: JSON.stringify({ action_id, variant_id, fields }),
+      }),
+    deleteAction: (id: string, action_record_id: string) =>
+      req<{ ok: boolean }>(`/api/apps/${id}/actions/${action_record_id}`, { method: "DELETE" }),
+    runAction: (id: string, action_record_id: string) =>
+      req<{ ok: boolean; degraded: boolean }>(`/api/apps/${id}/actions/${action_record_id}/run`, { method: "POST" }),
   },
   jobs: {
     list: (app_id?: string) =>

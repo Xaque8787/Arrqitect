@@ -24,11 +24,18 @@ def _tmpl_row(row) -> dict:
     return d
 
 
+class ActionConfig(BaseModel):
+    action_id: str
+    variant_id: str
+    fields: dict = {}
+
+
 class InstallRequest(BaseModel):
     template_slug: str
     name: str
     config: dict
-    version: str | None = None  # pin to specific version; defaults to latest
+    version: str | None = None
+    actions: list[ActionConfig] = []
 
 
 class UpdateConfigRequest(BaseModel):
@@ -121,7 +128,6 @@ async def install_app(req: InstallRequest):
             raise HTTPException(status_code=404, detail="Template not found")
         tmpl = _tmpl_row(tmpl_row)
 
-        # Resolve which version to install — explicit pin or latest
         target_version = req.version or tmpl.get("latest_version") or None
         version_id = None
         if target_version:
@@ -143,6 +149,14 @@ async def install_app(req: InstallRequest):
                 (id, template_id, template_version_id, slug, name, config, state)
             VALUES (?, ?, ?, ?, ?, ?, 'installing')
         """, (app_id, tmpl["id"], version_id, req.template_slug, req.name, json.dumps(req.config)))
+
+        for action in req.actions:
+            await db.execute("""
+                INSERT INTO app_actions (id, app_id, action_id, variant_id, fields)
+                VALUES (?, ?, ?, ?, ?)
+            """, (secrets.token_hex(16), app_id, action.action_id, action.variant_id,
+                  json.dumps(action.fields)))
+
         await db.commit()
 
     job = await enqueue_job(app_id, "install")
@@ -206,3 +220,100 @@ async def preview(app_id: str):
         "provides": json.loads(d.pop("provides")) if isinstance(d.get("provides"), str) else d.pop("provides", []),
     }
     return await preview_app(d)
+
+
+# --- Action CRUD ---
+
+@router.get("/{app_id}/actions")
+async def list_app_actions(app_id: str):
+    async with get_db() as db:
+        async with db.execute("SELECT id FROM installed_apps WHERE id = ?", (app_id,)) as cur:
+            if not await cur.fetchone():
+                raise HTTPException(status_code=404, detail="App not found")
+        async with db.execute(
+            "SELECT id, action_id, variant_id, fields, created_at FROM app_actions WHERE app_id = ? ORDER BY created_at",
+            (app_id,)
+        ) as cur:
+            rows = await cur.fetchall()
+
+    result = []
+    for row in rows:
+        d = dict(row)
+        if isinstance(d.get("fields"), str):
+            d["fields"] = json.loads(d["fields"])
+        d["app_id"] = app_id
+        result.append(d)
+    return result
+
+
+@router.post("/{app_id}/actions")
+async def create_app_action(app_id: str, action: ActionConfig):
+    async with get_db() as db:
+        async with db.execute("SELECT id FROM installed_apps WHERE id = ?", (app_id,)) as cur:
+            if not await cur.fetchone():
+                raise HTTPException(status_code=404, detail="App not found")
+
+        action_id = secrets.token_hex(16)
+        await db.execute("""
+            INSERT INTO app_actions (id, app_id, action_id, variant_id, fields)
+            VALUES (?, ?, ?, ?, ?)
+        """, (action_id, app_id, action.action_id, action.variant_id, json.dumps(action.fields)))
+        await db.commit()
+
+    return {
+        "id": action_id,
+        "app_id": app_id,
+        "action_id": action.action_id,
+        "variant_id": action.variant_id,
+        "fields": action.fields,
+    }
+
+
+@router.delete("/{app_id}/actions/{action_record_id}")
+async def delete_app_action(app_id: str, action_record_id: str):
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT id FROM app_actions WHERE id = ? AND app_id = ?",
+            (action_record_id, app_id)
+        ) as cur:
+            if not await cur.fetchone():
+                raise HTTPException(status_code=404, detail="Action not found")
+        await db.execute("DELETE FROM app_actions WHERE id = ?", (action_record_id,))
+        await db.commit()
+    return {"ok": True}
+
+
+@router.post("/{app_id}/actions/{action_record_id}/run")
+async def run_app_action(app_id: str, action_record_id: str):
+    """Manually re-run a single configured action outside of an install job."""
+    from app.services.actions.loader import load_actions_yaml, find_action, find_variant
+    from app.services.actions.executor import run_action
+
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT id, action_id, variant_id, fields FROM app_actions WHERE id = ? AND app_id = ?",
+            (action_record_id, app_id)
+        ) as cur:
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Action not found")
+
+    record = dict(row)
+    if isinstance(record.get("fields"), str):
+        record["fields"] = record["fields"]
+
+    actions_yaml = await load_actions_yaml(app_id)
+    if not actions_yaml:
+        raise HTTPException(status_code=422, detail="No actions defined for this app's template")
+
+    action_def = find_action(actions_yaml, record["action_id"])
+    if not action_def:
+        raise HTTPException(status_code=422, detail=f"Action {record['action_id']!r} not found in template")
+
+    variant_def = find_variant(action_def, record["variant_id"])
+    if not variant_def:
+        raise HTTPException(status_code=422, detail=f"Variant {record['variant_id']!r} not found")
+
+    degraded = await run_action(app_id, record, action_def, variant_def, "", None)
+    return {"ok": not degraded, "degraded": degraded}

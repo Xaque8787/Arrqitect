@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, Trash2, Eye, RefreshCw, X, Plus } from "lucide-react";
+import { ArrowLeft, Trash2, Eye, RefreshCw, X, Plus, Zap, Play } from "lucide-react";
 import { api, resolveHostPath, fieldPlaceholder } from "../api";
-import type { InstalledApp, ConfigField, PreviewResult, CustomEnvEntry, CustomStorageEntry } from "../api";
+import type { InstalledApp, ConfigField, PreviewResult, CustomEnvEntry, CustomStorageEntry, ActionsSchema, ActionDef, ActionVariantDef, ActionFieldDef, AppActionRecord } from "../api";
 
 function PreviewModal({ result, onClose }: { result: PreviewResult; onClose: () => void }) {
   return (
@@ -517,6 +517,8 @@ export default function AppDetail() {
         <AppJobs appId={app.id} />
       </div>
 
+      <AppActionsSection app={app} />
+
       {preview && <PreviewModal result={preview} onClose={() => setPreview(null)} />}
       {editOpen && (
         <EditConfigModal
@@ -525,6 +527,288 @@ export default function AppDetail() {
           composeBase={composeBase}
           onClose={() => setEditOpen(false)}
           onSaved={() => { setEditOpen(false); load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ActionFieldInput({
+  fieldDef,
+  value,
+  onChange,
+}: {
+  fieldDef: ActionFieldDef;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  if (fieldDef.type === "boolean") {
+    return (
+      <div className="form-group" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <label className="form-label" style={{ marginBottom: 0, flex: 1 }}>{fieldDef.label}</label>
+        <input
+          type="checkbox"
+          checked={value === "true"}
+          onChange={e => onChange(e.target.checked ? "true" : "false")}
+          style={{ width: 16, height: 16 }}
+        />
+      </div>
+    );
+  }
+  if (fieldDef.type === "select" && fieldDef.options?.length) {
+    return (
+      <div className="form-group">
+        <label className="form-label">{fieldDef.label}</label>
+        <select className="form-input" value={value} onChange={e => onChange(e.target.value)}>
+          {fieldDef.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+          {fieldDef.allow_custom && !fieldDef.options.includes(value) && (
+            <option value={value}>{value}</option>
+          )}
+        </select>
+        {fieldDef.allow_custom && (
+          <input
+            className="form-input"
+            style={{ marginTop: 4 }}
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            placeholder="Or enter custom URL"
+          />
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="form-group">
+      <label className="form-label">{fieldDef.label}</label>
+      <input
+        className="form-input"
+        type={fieldDef.type === "number" ? "number" : "text"}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+      />
+    </div>
+  );
+}
+
+function AddActionModal({
+  appId,
+  actionsSchema,
+  onAdded,
+  onClose,
+}: {
+  appId: string;
+  actionsSchema: ActionsSchema;
+  onAdded: () => void;
+  onClose: () => void;
+}) {
+  const [selectedAction, setSelectedAction] = useState<ActionDef | null>(null);
+  const [selectedVariant, setSelectedVariant] = useState<ActionVariantDef | null>(null);
+  const [fields, setFields] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const selectVariant = (action: ActionDef, variant: ActionVariantDef) => {
+    setSelectedAction(action);
+    setSelectedVariant(variant);
+    setFields(Object.fromEntries(variant.fields.map(f => [f.id, f.default ?? ""])));
+  };
+
+  const handleAdd = async () => {
+    if (!selectedAction || !selectedVariant) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await api.apps.createAction(appId, selectedAction.id, selectedVariant.id, fields);
+      onAdded();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add action");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+        <div className="modal-title">Add Action</div>
+
+        {!selectedVariant ? (
+          <>
+            {actionsSchema.actions.map(actionDef => (
+              <div key={actionDef.id} className="custom-section" style={{ marginBottom: 12 }}>
+                <div className="custom-section-header">
+                  <span className="custom-section-label">{actionDef.label}</span>
+                </div>
+                {actionDef.description && (
+                  <div style={{ fontSize: 12, color: "var(--color-text-dim)", marginBottom: 8 }}>{actionDef.description}</div>
+                )}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {actionDef.variants.map(variant => (
+                    <button
+                      key={variant.id}
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => selectVariant(actionDef, variant)}
+                    >
+                      <Plus size={12} /> {variant.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <div className="modal-actions">
+              <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 12 }}>
+              {selectedAction!.label} — {selectedVariant.label}
+            </div>
+            {selectedVariant.fields.filter(f => (f.visibility ?? "visible") === "visible").map(f => (
+              <ActionFieldInput
+                key={f.id}
+                fieldDef={f}
+                value={fields[f.id] ?? ""}
+                onChange={v => setFields(prev => ({ ...prev, [f.id]: v }))}
+              />
+            ))}
+            {selectedVariant.fields.some(f => f.visibility === "advanced") && (
+              <details className="advanced-section" style={{ marginTop: 8 }}>
+                <summary className="advanced-section-toggle">Advanced</summary>
+                <div className="advanced-section-body">
+                  {selectedVariant.fields.filter(f => f.visibility === "advanced").map(f => (
+                    <ActionFieldInput
+                      key={f.id}
+                      fieldDef={f}
+                      value={fields[f.id] ?? ""}
+                      onChange={v => setFields(prev => ({ ...prev, [f.id]: v }))}
+                    />
+                  ))}
+                </div>
+              </details>
+            )}
+            {error && <div className="form-error">{error}</div>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn-ghost" onClick={() => setSelectedVariant(null)}>Back</button>
+              <button type="button" className="btn btn-primary" onClick={handleAdd} disabled={saving}>
+                {saving ? <span className="spinner" /> : "Add Action"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AppActionsSection({ app }: { app: InstalledApp }) {
+  const [actions, setActions] = useState<AppActionRecord[]>([]);
+  const [schema, setSchema] = useState<ActionsSchema | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [runningId, setRunningId] = useState<string | null>(null);
+  const [runResults, setRunResults] = useState<Record<string, { ok: boolean; degraded: boolean }>>({});
+
+  const slug = app.slug;
+
+  const load = () => {
+    api.apps.listActions(app.id).then(setActions).catch(() => {});
+  };
+
+  useEffect(() => {
+    load();
+    api.templates.actions(slug).then(s => {
+      if (s.actions.length > 0) setSchema(s);
+    }).catch(() => {});
+  }, [app.id, slug]);
+
+  if (!schema && actions.length === 0) return null;
+
+  const getLabel = (action_id: string, variant_id: string) => {
+    if (!schema) return `${action_id}/${variant_id}`;
+    const a = schema.actions.find(a => a.id === action_id);
+    const v = a?.variants.find(v => v.id === variant_id);
+    return v ? `${a!.label} — ${v.label}` : `${action_id}/${variant_id}`;
+  };
+
+  const handleRun = async (record: AppActionRecord) => {
+    setRunningId(record.id);
+    try {
+      const result = await api.apps.runAction(app.id, record.id);
+      setRunResults(prev => ({ ...prev, [record.id]: result }));
+    } catch {
+      setRunResults(prev => ({ ...prev, [record.id]: { ok: false, degraded: true } }));
+    } finally {
+      setRunningId(null);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    await api.apps.deleteAction(app.id, id);
+    load();
+  };
+
+  return (
+    <div className="detail-section">
+      <div className="detail-section-title" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span>Actions</span>
+        {schema && (
+          <button className="btn btn-ghost btn-sm" onClick={() => setShowAdd(true)}>
+            <Plus size={13} /> Add Action
+          </button>
+        )}
+      </div>
+
+      {actions.length === 0 ? (
+        <div style={{ color: "var(--color-text-dim)", fontSize: 13 }}>
+          No actions configured.{schema ? " Use the button above to add one." : ""}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {actions.map(record => {
+            const result = runResults[record.id];
+            return (
+              <div key={record.id} className="card" style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+                <Zap size={14} style={{ color: "var(--color-primary)", flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{getLabel(record.action_id, record.variant_id)}</div>
+                  {record.fields.name && (
+                    <div style={{ fontSize: 12, color: "var(--color-text-dim)", marginTop: 2 }}>{record.fields.name}</div>
+                  )}
+                </div>
+                {result && (
+                  <span style={{ fontSize: 12, color: result.ok ? "var(--color-success)" : "var(--color-warning)" }}>
+                    {result.ok ? "OK" : "Degraded"}
+                  </span>
+                )}
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => handleRun(record)}
+                  disabled={runningId === record.id}
+                  title="Run now"
+                >
+                  {runningId === record.id ? <span className="spinner" style={{ width: 13, height: 13 }} /> : <Play size={13} />}
+                </button>
+                <button
+                  className="custom-row-remove"
+                  onClick={() => handleDelete(record.id)}
+                  title="Remove"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showAdd && schema && (
+        <AddActionModal
+          appId={app.id}
+          actionsSchema={schema}
+          onAdded={load}
+          onClose={() => setShowAdd(false)}
         />
       )}
     </div>

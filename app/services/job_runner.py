@@ -586,6 +586,11 @@ async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> bo
             is_reconcile=False,
         )
 
+    # Run post_actions phase: execute any app_actions configured at install time
+    from app.services.actions.executor import run_app_actions
+    actions_degraded = await run_app_actions(app_id, job_id, _broadcast)
+    has_degraded = has_degraded or actions_degraded
+
     await _set_app_state(app_id, "running" if not dry_run else "stopped")
 
     # Trigger update jobs on connected providers so they recompile and create

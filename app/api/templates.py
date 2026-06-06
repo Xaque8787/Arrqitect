@@ -1,4 +1,5 @@
 import json
+import yaml
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.db.client import get_db
@@ -80,3 +81,32 @@ async def trigger_sync(req: SyncRequest = SyncRequest()):
     if not result.get("ok") and not result.get("results"):
         raise HTTPException(status_code=502, detail=result.get("error", "Sync failed"))
     return result
+
+
+@router.get("/{slug}/actions")
+async def get_template_actions(slug: str):
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT v.actions_definitions
+            FROM app_templates t
+            JOIN template_versions v ON v.template_id = t.id AND v.version = t.latest_version
+            WHERE t.slug = ?
+        """, (slug,)) as cur:
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    raw = row[0] or ""
+    if not raw:
+        return {"actions": []}
+
+    try:
+        parsed = yaml.safe_load(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to parse actions YAML: {exc}")
+
+    if not isinstance(parsed, dict):
+        return {"actions": []}
+
+    return parsed

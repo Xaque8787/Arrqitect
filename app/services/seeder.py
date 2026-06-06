@@ -34,8 +34,10 @@ def seed_templates() -> None:
 
             raw_text = yaml_file.read_text()
             source_url = str(yaml_file)
+            actions_file = template_dir / "actions.yaml"
+            actions_text = actions_file.read_text() if actions_file.exists() else ""
             try:
-                result = _ingest_template(raw_text, source_url, conn)
+                result = _ingest_template(raw_text, source_url, conn, actions_text)
                 checked += 1
                 status = result.get("status", "?")
                 slug = result.get("slug", template_dir.name)

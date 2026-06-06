@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS template_versions (
     consumes            TEXT NOT NULL DEFAULT '[]',
     service_definitions TEXT NOT NULL DEFAULT '',
     has_passthrough     INTEGER NOT NULL DEFAULT 0,
+    actions_definitions TEXT NOT NULL DEFAULT '',
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE (template_id, version)
 );
@@ -168,6 +169,17 @@ CREATE TABLE IF NOT EXISTS reconcile_state (
 );
 
 CREATE INDEX IF NOT EXISTS idx_reconcile_state_consumer ON reconcile_state (consumer_app_id);
+
+CREATE TABLE IF NOT EXISTS app_actions (
+    id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    app_id     TEXT NOT NULL REFERENCES installed_apps(id) ON DELETE CASCADE,
+    action_id  TEXT NOT NULL,
+    variant_id TEXT NOT NULL,
+    fields     TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_actions_app ON app_actions (app_id);
 """
 
 
