@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, Trash2, Eye, RefreshCw, X, Plus, Zap, Play } from "lucide-react";
+import { ArrowLeft, Trash2, Eye, RefreshCw, X, Plus, Zap, Play, CircleArrowUp as ArrowUpCircle } from "lucide-react";
 import { api, resolveHostPath, fieldPlaceholder } from "../api";
-import type { InstalledApp, ConfigField, PreviewResult, CustomEnvEntry, CustomStorageEntry, ActionsSchema, ActionDef, ActionVariantDef, ActionFieldDef, AppActionRecord } from "../api";
+import type { InstalledApp, ConfigField, PreviewResult, CustomEnvEntry, CustomStorageEntry, ActionsSchema, ActionDef, ActionVariantDef, ActionFieldDef, AppActionRecord, TemplateUpdatePreview } from "../api";
 
 function PreviewModal({ result, onClose }: { result: PreviewResult; onClose: () => void }) {
   return (
@@ -424,6 +424,9 @@ export default function AppDetail() {
   const [removing, setRemoving] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [composeBase, setComposeBase] = useState<string | null>(null);
+  const [updatePreview, setUpdatePreview] = useState<TemplateUpdatePreview | null>(null);
+  const [loadingUpdate, setLoadingUpdate] = useState(false);
+  const [committingUpdate, setCommittingUpdate] = useState(false);
 
   const load = () => {
     if (!id) return;
@@ -451,6 +454,28 @@ export default function AppDetail() {
     const result = await api.apps.preview(app.id);
     setPreview(result);
     setLoadingPreview(false);
+  };
+
+  const handleUpdatePreview = async () => {
+    if (!app) return;
+    setLoadingUpdate(true);
+    try {
+      const result = await api.queue.previewUpdate(app.id);
+      setUpdatePreview(result);
+    } finally {
+      setLoadingUpdate(false);
+    }
+  };
+
+  const handleCommitUpdate = async () => {
+    if (!app) return;
+    setCommittingUpdate(true);
+    try {
+      const { job } = await api.queue.commitUpdate(app.id);
+      navigate(`/jobs/${job.id}`);
+    } catch {
+      setCommittingUpdate(false);
+    }
   };
 
   if (loading) return <div className="loading-center"><div className="spinner" /></div>;
@@ -484,6 +509,35 @@ export default function AppDetail() {
           </button>
         </div>
       </div>
+
+      {app.app_templates?.installed_version && app.app_templates.latest_version &&
+        app.app_templates.installed_version !== app.app_templates.latest_version && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "var(--color-primary-dim)", borderRadius: 8, marginBottom: 16 }}>
+          <ArrowUpCircle size={18} style={{ color: "var(--color-primary)", flexShrink: 0 }} />
+          <div style={{ flex: 1 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-primary)" }}>Update available</span>
+            <span style={{ fontSize: 12, color: "var(--color-text-muted)", marginLeft: 8 }}>
+              {app.app_templates.installed_version} → {app.app_templates.latest_version}
+            </span>
+          </div>
+          {updatePreview ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {updatePreview.new_required_fields && updatePreview.new_required_fields.length > 0 && (
+                <span style={{ fontSize: 12, color: "var(--color-warning)" }}>
+                  {updatePreview.new_required_fields.length} new field{updatePreview.new_required_fields.length !== 1 ? "s" : ""} required
+                </span>
+              )}
+              <button className="btn btn-primary btn-sm" onClick={handleCommitUpdate} disabled={committingUpdate}>
+                {committingUpdate ? <span className="spinner" style={{ width: 13, height: 13 }} /> : "Update Now"}
+              </button>
+            </div>
+          ) : (
+            <button className="btn btn-ghost btn-sm" onClick={handleUpdatePreview} disabled={loadingUpdate}>
+              {loadingUpdate ? <span className="spinner" style={{ width: 13, height: 13 }} /> : "Preview Update"}
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="detail-section">
         <div className="detail-section-title">Configuration</div>

@@ -74,6 +74,20 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+async def enqueue_bulk_install(ordered_app_ids: list[str]) -> dict:
+    """Create and start a bulk_install job for a list of app ids (in install order)."""
+    job_id = secrets.token_hex(16)
+    async with get_db() as db:
+        await db.execute("""
+            INSERT INTO jobs (id, installed_app_id, type, status, dry_run, is_reconcile, bulk_app_ids)
+            VALUES (?, NULL, 'bulk_install', 'pending', 0, 0, ?)
+        """, (job_id, json.dumps(ordered_app_ids)))
+        await db.commit()
+
+    asyncio.create_task(_run_bulk_install_job(job_id, ordered_app_ids))
+    return {"id": job_id, "type": "bulk_install", "status": "pending"}
+
+
 async def enqueue_job(installed_app_id: str, job_type: str, dry_run: bool = False) -> dict:
     job_id = secrets.token_hex(16)
     async with get_db() as db:
@@ -848,3 +862,194 @@ def _resolve_image_ids(image_refs: list[str]) -> list[str]:
             if image_id:
                 ids.append(image_id)
     return ids
+
+
+async def _run_bulk_install_job(job_id: str, ordered_app_ids: list[str]) -> None:
+    """
+    Execute a bulk install: deploy each app in dependency order.
+    Steps are prefixed with the app slug so the log groups naturally.
+    If an app fails, its declared consumers (later in the list) are skipped.
+    """
+    await _set_job_status(job_id, JobStatus.RUNNING.value)
+    has_degraded = False
+    failed_slugs: set[str] = set()
+
+    try:
+        for app_id in ordered_app_ids:
+            app = await _load_app(app_id)
+            if not app:
+                await _add_step(
+                    job_id, f"skip_{app_id[:8]}", StepStatus.SKIPPED.value,
+                    f"App {app_id} not found — may have been removed",
+                    finished_at=_now(),
+                )
+                continue
+
+            slug = app["slug"]
+
+            # Skip if a provider this app consumes failed
+            consumes_raw = app.get("consumes", [])
+            if isinstance(consumes_raw, str):
+                try:
+                    consumes_raw = json.loads(consumes_raw)
+                except Exception:
+                    consumes_raw = []
+
+            skip_because = None
+            for c in consumes_raw:
+                key = c.get("key") if isinstance(c, dict) else str(c)
+                provider_slug = key.split(".")[0] if key else ""
+                if provider_slug in failed_slugs:
+                    skip_because = provider_slug
+                    break
+
+            if skip_because:
+                await _add_step(
+                    job_id, f"{slug}:skipped", StepStatus.SKIPPED.value,
+                    f"Skipped: provider {skip_because!r} failed",
+                    finished_at=_now(),
+                )
+                await _set_app_state(app_id, "staged")
+                continue
+
+            # Transition to installing
+            await _set_app_state(app_id, "installing")
+            await _add_step(
+                job_id, f"{slug}:start", StepStatus.SUCCESS.value,
+                f"Starting install for {app['name']}",
+                finished_at=_now(),
+            )
+
+            # Create a per-app sub-job for step namespacing; re-use bulk job_id
+            # Steps are prefixed with slug so the frontend can group them
+            original_add_step = _add_step.__wrapped__ if hasattr(_add_step, "__wrapped__") else None
+
+            class _PrefixedStepProxy:
+                """Forwards steps to the bulk job with slug prefix."""
+                def __init__(self, slug: str, job_id: str):
+                    self._slug = slug
+                    self._job_id = job_id
+
+                async def add(self, step: str, status: str, log: str, finished_at=None):
+                    await _add_step(self._job_id, f"{self._slug}:{step}", status, log, finished_at)
+
+            proxy = _PrefixedStepProxy(slug, job_id)
+
+            try:
+                app_degraded = await _run_install_for_bulk(proxy, app_id, app)
+                has_degraded = has_degraded or app_degraded
+            except Exception as exc:
+                await _add_step(
+                    job_id, f"{slug}:error", StepStatus.FAILED.value, str(exc),
+                    finished_at=_now(),
+                )
+                await _set_app_state(app_id, "error")
+                failed_slugs.add(slug)
+
+        final_status = JobStatus.DEGRADED if has_degraded else JobStatus.SUCCESS
+        await _set_job_status(job_id, final_status.value)
+
+    except Exception as exc:
+        await _add_step(job_id, "bulk_error", StepStatus.FAILED.value, str(exc), finished_at=_now())
+        await _set_job_status(job_id, JobStatus.FAILED.value)
+
+
+async def _run_install_for_bulk(proxy, app_id: str, app: dict) -> bool:
+    """
+    Runs the full install pipeline for a single app within a bulk install job.
+    Steps are emitted via proxy.add() so they carry the app slug prefix.
+    Returns True if any step was degraded.
+    """
+    hooks = app.get("hook_definitions", {})
+    slug = app["slug"]
+    has_degraded = False
+
+    # Provider network prep
+    if not _is_passthrough(app):
+        consumes_raw = app.get("consumes", [])
+        if isinstance(consumes_raw, str):
+            try:
+                consumes_raw = json.loads(consumes_raw)
+            except Exception:
+                consumes_raw = []
+        connectivity_providers = await _find_connectivity_providers(app_id, consumes_raw)
+        if connectivity_providers:
+            await _prep_provider_networks(proxy._job_id, connectivity_providers)
+
+    app_ir = None
+    if _is_passthrough(app):
+        await proxy.add("render_compose", "running", "Rendering docker-compose.yml (legacy passthrough)")
+        config = app.get("config", {})
+        schema = app.get("config_schema", [])
+        rendered = _legacy_render_compose(app["compose_template"], config, schema, slug)
+        env_content = _legacy_build_env(config, schema, slug)
+        ir_hash = ""
+        compose_hash = ""
+        await proxy.add("render_compose", StepStatus.SUCCESS.value, "Compose rendered (passthrough)", finished_at=_now())
+    else:
+        await proxy.add("compile_ir", "running", "Compiling application IR")
+        compose_yaml, env_content, ir_hash, compose_hash, app_ir = await _compile_and_render(
+            proxy._job_id, app_id, app
+        )
+        rendered = compose_yaml
+        await proxy.add("compile_ir", StepStatus.SUCCESS.value, f"IR compiled ({ir_hash[:12]}...)", finished_at=_now())
+
+    await proxy.add("write_compose", "running", "Writing docker-compose.yml and .env")
+    compose_path, env_path = write_compose_files(slug, rendered, env_content)
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE installed_apps SET compose_path = ?, ir_hash = ?, compose_hash = ? WHERE id = ?",
+            (compose_path, ir_hash, compose_hash, app_id),
+        )
+        await db.commit()
+    await proxy.add("write_compose", StepStatus.SUCCESS.value, f"Written: {compose_path}", finished_at=_now())
+
+    if app_ir is not None:
+        puid, pgid = _extract_puid_pgid(app_ir)
+        if puid and pgid:
+            await proxy.add("chown_dirs", "running", f"Preparing mount ownership (PUID={puid} PGID={pgid})")
+            loop = asyncio.get_event_loop()
+            compose_base = get_compose_base()
+            log_lines = await loop.run_in_executor(
+                None, lambda: _prepare_mount_ownership(app_ir, puid, pgid, compose_base)
+            )
+            await proxy.add("chown_dirs", StepStatus.SUCCESS.value,
+                            "\n".join(log_lines) or "No mounts required ownership changes",
+                            finished_at=_now())
+
+    await proxy.add("docker_up", "running", "Running docker compose up -d")
+    result = await _docker_compose(compose_path, ["up", "-d"])
+    status = StepStatus.SUCCESS.value if result.returncode == 0 else StepStatus.FAILED.value
+    await proxy.add("docker_up", status, result.stdout + result.stderr, finished_at=_now())
+    if result.returncode != 0:
+        raise RuntimeError("docker compose up failed")
+
+    if hooks.get("post_install"):
+        hook_degraded = await _run_hook(proxy._job_id, app_id, slug, hooks, "post_install")
+        has_degraded = has_degraded or hook_degraded
+        await trigger_reconcile_for_consumers(
+            provider_app_id=app_id,
+            event_type="capability_published",
+            payload={"provider_slug": slug},
+            is_reconcile=False,
+        )
+
+    from app.services.actions.executor import run_app_actions
+    actions_degraded = await run_app_actions(app_id, proxy._job_id, _broadcast)
+    has_degraded = has_degraded or actions_degraded
+
+    await _set_app_state(app_id, "running")
+
+    # Trigger provider recompiles for shared networks
+    if not _is_passthrough(app):
+        consumes_raw = app.get("consumes", [])
+        if isinstance(consumes_raw, str):
+            try:
+                consumes_raw = json.loads(consumes_raw)
+            except Exception:
+                consumes_raw = []
+        providers = await _find_connectivity_providers(app_id, consumes_raw)
+        for provider in providers:
+            await enqueue_job(provider["id"], "update")
+
+    return has_degraded

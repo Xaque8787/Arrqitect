@@ -49,6 +49,10 @@ export default function InstalledApps() {
                 </div>
                 <div className="app-card-footer">
                   <span className={`badge badge-${app.state}`}>{app.state}</span>
+                  {app.app_templates?.installed_version && app.app_templates.latest_version &&
+                    app.app_templates.installed_version !== app.app_templates.latest_version && (
+                    <span className="badge badge-update">update available</span>
+                  )}
                   <span style={{ fontSize: 12, color: "var(--color-text-dim)" }}>
                     {new Date(app.created_at).toLocaleDateString()}
                   </span>

@@ -123,6 +123,18 @@ def _ingest_template(raw_text: str, source_url: str, conn, actions_text: str | N
         raise SyncError(f"Unsupported schema_version: {sv!r}")
 
 
+def _check_pinned_tag_warnings(template_model) -> list[str]:
+    """Return warning strings for services using tag: latest."""
+    warnings = []
+    for svc in template_model.services:
+        if svc.image.tag == "latest":
+            warnings.append(
+                f"Service '{svc.id}' uses tag: latest — updates will not be detectable. "
+                "Use a pinned version tag."
+            )
+    return warnings
+
+
 def _ingest_v2(raw_text: str, raw: dict, source_url: str, conn, actions_text: str) -> dict:
     """Ingest a schema_version 2 template via ECB parser."""
     try:
@@ -155,6 +167,7 @@ def _ingest_v2(raw_text: str, raw: dict, source_url: str, conn, actions_text: st
     hooks_json = json.dumps(template_model.hooks)
     description = raw.get("description", "")
     icon_url = raw.get("icon_url", "")
+    validation_warnings_json = json.dumps(_check_pinned_tag_warnings(template_model))
 
     template_id = _upsert_app_template(
         conn, slug, name, description, icon_url, source_url,
@@ -194,12 +207,12 @@ def _ingest_v2(raw_text: str, raw: dict, source_url: str, conn, actions_text: st
         INSERT INTO template_versions
             (id, template_id, version, schema_version, content_hash,
              compose, config_schema, hook_definitions, provides, consumes,
-             service_definitions, has_passthrough, actions_definitions)
-        VALUES (?, ?, ?, 2, ?, '', ?, ?, ?, ?, ?, 0, ?)
+             service_definitions, has_passthrough, actions_definitions, validation_warnings)
+        VALUES (?, ?, ?, 2, ?, '', ?, ?, ?, ?, ?, 0, ?, ?)
     """, (
         version_id, template_id, version, content_hash,
         config_schema_json, hooks_json, provides_json, consumes_json,
-        service_definitions, actions_text,
+        service_definitions, actions_text, validation_warnings_json,
     ))
 
     conn.execute(

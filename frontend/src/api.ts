@@ -25,6 +25,15 @@ export interface ConfigField {
   allowed_values?: string[] | null;
   ui_widget?: "input" | "select";
   editable?: boolean;
+  requires?: ConfigRequires[];
+}
+
+export interface ConfigRequires {
+  app: string;
+  config?: string | null;
+  action?: string | null;
+  severity: "error" | "warning";
+  message?: string | null;
 }
 
 export interface CapabilityProvides {
@@ -84,9 +93,10 @@ export interface InstalledApp {
   slug: string;
   name: string;
   config: Record<string, unknown>;
-  state: "installing" | "running" | "stopped" | "error" | "removing";
+  state: "staged" | "installing" | "running" | "stopped" | "error" | "removing";
   compose_path: string;
   created_at: string;
+  actions?: AppActionRecord[];
   app_templates?: AppTemplate & {
     installed_version: string | null;
     compose_template?: string;
@@ -101,6 +111,7 @@ export interface Job {
   dry_run: boolean;
   is_reconcile: boolean;
   created_at: string;
+  bulk_app_ids?: string[];
   job_steps?: JobStep[];
 }
 
@@ -118,6 +129,32 @@ export interface ValidationResult {
   severity: "error" | "warning" | "info";
   step_id: string | null;
   message: string;
+}
+
+export interface QueueValidationIssue {
+  severity: "error" | "warning";
+  type: string;
+  consumer_app_id: string;
+  consumer_app_name: string;
+  message: string;
+  target_app_slug: string | null;
+  field_id: string | null;
+  action_id: string | null;
+}
+
+export interface QueueValidationResult {
+  valid: boolean;
+  install_order: string[];
+  issues: QueueValidationIssue[];
+}
+
+export interface TemplateUpdatePreview {
+  up_to_date: boolean;
+  from_version: string;
+  to_version: string;
+  new_required_fields?: ConfigField[];
+  removed_fields?: string[];
+  new_version_id?: string;
 }
 
 export interface PreviewResult {
@@ -235,6 +272,44 @@ export const api = {
       req<{ ok: boolean }>(`/api/apps/${id}/actions/${action_record_id}`, { method: "DELETE" }),
     runAction: (id: string, action_record_id: string) =>
       req<{ ok: boolean; degraded: boolean }>(`/api/apps/${id}/actions/${action_record_id}/run`, { method: "POST" }),
+  },
+  queue: {
+    list: () => req<InstalledApp[]>("/api/queue"),
+    stage: (
+      template_slug: string,
+      name: string,
+      config: Record<string, unknown>,
+      version?: string,
+      actions?: { action_id: string; variant_id: string; fields: Record<string, string> }[],
+    ) =>
+      req<{ id: string; slug: string; name: string; state: "staged" }>("/api/queue/stage", {
+        method: "POST",
+        body: JSON.stringify({ template_slug, name, config, version: version ?? null, actions: actions ?? [] }),
+      }),
+    update: (
+      app_id: string,
+      config: Record<string, unknown>,
+      actions?: { action_id: string; variant_id: string; fields: Record<string, string> }[],
+    ) =>
+      req<{ ok: boolean }>(`/api/queue/${app_id}`, {
+        method: "PUT",
+        body: JSON.stringify({ config, actions: actions ?? [] }),
+      }),
+    remove: (app_id: string) =>
+      req<{ ok: boolean }>(`/api/queue/${app_id}`, { method: "DELETE" }),
+    validate: () => req<QueueValidationResult>("/api/queue/validate", { method: "POST" }),
+    install: (force = false) =>
+      req<{ job: Job; install_order: string[] }>("/api/queue/install", {
+        method: "POST",
+        body: JSON.stringify({ force }),
+      }),
+    previewUpdate: (app_id: string) =>
+      req<TemplateUpdatePreview>(`/api/queue/app-update/${app_id}/preview`),
+    commitUpdate: (app_id: string, extra_config?: Record<string, unknown>) =>
+      req<{ job: Job }>(`/api/queue/app-update/${app_id}/commit`, {
+        method: "POST",
+        body: JSON.stringify({ extra_config: extra_config ?? {} }),
+      }),
   },
   jobs: {
     list: (app_id?: string) =>

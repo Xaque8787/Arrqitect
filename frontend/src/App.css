@@ -106,6 +106,8 @@
 .badge-timeout { background: var(--color-error-dim); color: var(--color-error); }
 .badge-skipped { background: var(--color-surface-3); color: var(--color-text-dim); }
 .badge-obsolete { background: var(--color-surface-3); color: var(--color-text-dim); }
+.badge-staged { background: var(--color-primary-dim); color: var(--color-primary); }
+.badge-update { background: var(--color-warning-dim); color: var(--color-warning); }
 
 /* Form */
 .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px; }

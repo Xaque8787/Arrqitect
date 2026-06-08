@@ -8,7 +8,7 @@ exists because Compose exists, it does not belong here.
 
 from __future__ import annotations
 from typing import Literal
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class RestartModel(BaseModel):
@@ -73,6 +73,27 @@ class CapabilityConsumes(BaseModel):
     connectivity: bool = False
 
 
+class ConfigRequires(BaseModel):
+    """Cross-app pre-install validation declaration.
+
+    Only valid on user-visible config fields (visibility != hidden).
+    Exactly one of `config` or `action` must be set.
+    """
+    app: str
+    config: str | None = None
+    action: str | None = None
+    severity: Literal["error", "warning"] = "error"
+    message: str | None = None
+
+    @model_validator(mode="after")
+    def exactly_one_target(self) -> "ConfigRequires":
+        if self.config is None and self.action is None:
+            raise ValueError("ConfigRequires must specify either 'config' or 'action'")
+        if self.config is not None and self.action is not None:
+            raise ValueError("ConfigRequires must specify either 'config' or 'action', not both")
+        return self
+
+
 class ConfigField(BaseModel):
     id: str
     label: str
@@ -86,6 +107,7 @@ class ConfigField(BaseModel):
     allowed_values: list[str] | None = None
     ui_widget: Literal["input", "select"] = "input"
     editable: bool = True
+    requires: list[ConfigRequires] = []
 
 
 class AppModel(BaseModel):

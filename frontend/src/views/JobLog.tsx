@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
 import { api } from "../api";
 import type { Job, JobStep } from "../api";
 
@@ -11,6 +11,51 @@ function stepClass(status: string) {
   if (status === "running") return "running";
   if (status === "skipped") return "skipped";
   return "";
+}
+
+function groupStatus(steps: JobStep[]): string {
+  if (steps.some(s => s.status === "failed" || s.status === "timeout")) return "failed";
+  if (steps.some(s => s.status === "running")) return "running";
+  if (steps.some(s => s.status === "continue_success")) return "degraded";
+  if (steps.every(s => s.status === "success" || s.status === "skipped" || s.status === "continue_success")) return "success";
+  return "pending";
+}
+
+function BulkStepGroup({ slug, steps }: { slug: string; steps: JobStep[] }) {
+  const status = groupStatus(steps);
+  const [open, setOpen] = useState(status === "failed" || status === "running");
+
+  return (
+    <div style={{ border: "1px solid var(--color-border)", borderRadius: 8, overflow: "hidden", marginBottom: 6 }}>
+      <button
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", background: "var(--color-surface-2)", border: "none", cursor: "pointer", textAlign: "left" }}
+        onClick={() => setOpen(o => !o)}
+      >
+        {open ? <ChevronDown size={14} style={{ flexShrink: 0 }} /> : <ChevronRight size={14} style={{ flexShrink: 0 }} />}
+        <span style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>{slug}</span>
+        <span style={{ fontSize: 11, color: "var(--color-text-dim)" }}>{steps.length} step{steps.length !== 1 ? "s" : ""}</span>
+        <span className={`badge badge-${status}`}>{status}</span>
+      </button>
+      {open && (
+        <div style={{ padding: "4px 0" }}>
+          {steps.map((step, i) => {
+            const localName = step.step.includes(":") ? step.step.split(":").slice(1).join(":") : step.step;
+            return (
+              <div key={`${step.step}-${i}`} className={`step-item ${stepClass(step.status)}`} style={{ borderRadius: 0, borderLeft: "none", borderRight: "none" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span className="step-name">{localName}</span>
+                    <span className={`badge badge-${step.status}`}>{step.status}</span>
+                  </div>
+                  {step.log && <div className="step-log">{step.log}</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function JobLog() {
@@ -93,6 +138,21 @@ export default function JobLog() {
 
   const isActive = jobStatus === "pending" || jobStatus === "running";
   const isDegraded = jobStatus === "degraded";
+  const isBulk = job.type === "bulk_install";
+
+  const bulkGroups: Record<string, JobStep[]> = {};
+  const flatSteps: JobStep[] = [];
+
+  if (isBulk) {
+    for (const step of steps) {
+      const colonIdx = step.step.indexOf(":");
+      const group = colonIdx >= 0 ? step.step.slice(0, colonIdx) : "__global__";
+      if (!bulkGroups[group]) bulkGroups[group] = [];
+      bulkGroups[group].push(step);
+    }
+  } else {
+    flatSteps.push(...steps);
+  }
 
   return (
     <div>
@@ -114,17 +174,35 @@ export default function JobLog() {
       </div>
 
       <div className="step-list">
-        {steps.map((step, i) => (
-          <div key={`${step.step}-${i}`} className={`step-item ${stepClass(step.status)}`}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <span className="step-name">{step.step}</span>
-                <span className={`badge badge-${step.status}`}>{step.status}</span>
+        {isBulk ? (
+          Object.entries(bulkGroups).map(([slug, groupSteps]) =>
+            slug === "__global__"
+              ? groupSteps.map((step, i) => (
+                <div key={`${step.step}-${i}`} className={`step-item ${stepClass(step.status)}`}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <span className="step-name">{step.step}</span>
+                      <span className={`badge badge-${step.status}`}>{step.status}</span>
+                    </div>
+                    {step.log && <div className="step-log">{step.log}</div>}
+                  </div>
+                </div>
+              ))
+              : <BulkStepGroup key={slug} slug={slug} steps={groupSteps} />
+          )
+        ) : (
+          flatSteps.map((step, i) => (
+            <div key={`${step.step}-${i}`} className={`step-item ${stepClass(step.status)}`}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <span className="step-name">{step.step}</span>
+                  <span className={`badge badge-${step.status}`}>{step.status}</span>
+                </div>
+                {step.log && <div className="step-log">{step.log}</div>}
               </div>
-              {step.log && <div className="step-log">{step.log}</div>}
             </div>
-          </div>
-        ))}
+          ))
+        )}
         {steps.length === 0 && isActive && (
           <div style={{ color: "var(--color-text-dim)", fontSize: 13 }}>Waiting for steps...</div>
         )}
