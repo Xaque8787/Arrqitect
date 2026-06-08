@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS installed_apps (
     name                TEXT NOT NULL,
     config              TEXT NOT NULL DEFAULT '{}',
     state               TEXT NOT NULL DEFAULT 'stopped'
-                            CHECK (state IN ('installing','running','stopped','error','removing')),
+                            CHECK (state IN ('staged','installing','running','stopped','error','removing')),
     compose_path        TEXT NOT NULL DEFAULT '',
     ir_hash             TEXT NOT NULL DEFAULT '',
     compose_hash        TEXT NOT NULL DEFAULT '',
@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     id               TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     installed_app_id TEXT REFERENCES installed_apps(id) ON DELETE SET NULL,
     type             TEXT NOT NULL
-                         CHECK (type IN ('install','update','remove','reconcile','preview')),
+                         CHECK (type IN ('install','update','remove','reconcile','preview','bulk_install')),
     status           TEXT NOT NULL DEFAULT 'pending'
                          CHECK (status IN ('pending','running','success','degraded','failed','cancelled','obsolete')),
     dry_run          INTEGER NOT NULL DEFAULT 0,
