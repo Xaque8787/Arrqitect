@@ -15,7 +15,7 @@ services:
   - id: prowlarr
     image:
       repository: lscr.io/linuxserver/prowlarr
-      tag: latest
+      tag: 2.3.5.5327-ls147
 
     networking:
       ports:
