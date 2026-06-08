@@ -65,14 +65,10 @@ def _parse_json_field(value, default):
 
 
 def _field_is_set(value, default) -> bool:
-    """True if the config value is non-empty and not equal to the declared default."""
+    """True if the config value is non-empty (a confirmed default still counts as set)."""
     if value is None:
         return False
-    str_val = str(value).strip()
-    if not str_val:
-        return False
-    str_default = str(default).strip() if default is not None else ""
-    return str_val != str_default
+    return bool(str(value).strip())
 
 
 async def validate_queue() -> QueueValidationResult:
