@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, Trash2, Eye, RefreshCw, X, Plus, Zap, Play, CircleArrowUp as ArrowUpCircle } from "lucide-react";
 import { api, resolveHostPath, fieldPlaceholder } from "../api";
-import type { InstalledApp, ConfigField, PreviewResult, CustomEnvEntry, CustomStorageEntry, ActionsSchema, ActionDef, ActionVariantDef, ActionFieldDef, AppActionRecord, TemplateUpdatePreview } from "../api";
+import type { InstalledApp, ConfigField, PreviewResult, CustomEnvEntry, CustomStorageEntry, ActionsSchema, ActionDef, ActionVariantDef, ActionFieldDef, AppActionRecord, TemplateUpdatePreview, Job } from "../api";
 
 function PreviewModal({ result, onClose }: { result: PreviewResult; onClose: () => void }) {
   return (
@@ -883,6 +883,9 @@ function AppJobs({ appId }: { appId: string }) {
     return <div style={{ color: "var(--color-text-dim)", fontSize: 13 }}>No jobs yet.</div>;
   }
 
+  const displayType = (job: Job) =>
+    job.type === "bulk_install" ? "install" : job.type;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {jobs.slice(0, 10).map(job => (
@@ -893,7 +896,8 @@ function AppJobs({ appId }: { appId: string }) {
           onClick={() => navigate(`/jobs/${job.id}`)}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 13, fontWeight: 500 }}>{job.type}</span>
+            <span style={{ fontSize: 13, fontWeight: 500 }}>{displayType(job)}</span>
+            {job.type === "bulk_install" && <span className="tag">bulk</span>}
             {job.dry_run && <span className="tag">dry run</span>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
