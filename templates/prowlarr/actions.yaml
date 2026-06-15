@@ -51,6 +51,7 @@ actions:
         label: Nyaa.si
         description: Anime and manga torrents
         idempotency_value: nyaasi
+        enabled_by_default: true
         body_template: >-
           {"name":"<<field.name>>","enable":<<field.enable>>,"priority":<<field.priority>>,"appProfileId":1,"protocol":"torrent","privacy":"public","tags":[],"definitionName":"nyaasi","implementationName":"Cardigann","implementation":"Cardigann","configContract":"CardigannSettings","fields":[{"name":"definitionFile","value":"nyaasi"},{"name":"baseUrl","value":"<<field.baseUrl>>"}]}
         fields:
@@ -76,6 +77,7 @@ actions:
         label: The Pirate Bay
         description: General purpose torrent indexer
         idempotency_value: thepiratebay
+        enabled_by_default: true
         body_template: >-
           {"name":"<<field.name>>","enable":<<field.enable>>,"priority":<<field.priority>>,"appProfileId":1,"protocol":"torrent","privacy":"public","tags":[],"definitionName":"thepiratebay","implementationName":"Cardigann","implementation":"Cardigann","configContract":"CardigannSettings","fields":[{"name":"definitionFile","value":"thepiratebay"},{"name":"baseUrl","value":"<<field.baseUrl>>"}]}
         fields:

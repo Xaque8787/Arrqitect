@@ -210,6 +210,7 @@ export interface ActionVariantDef {
   label: string;
   description?: string;
   idempotency_value?: string;
+  enabled_by_default?: boolean;
   fields: ActionFieldDef[];
 }
 

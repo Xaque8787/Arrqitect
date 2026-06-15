@@ -227,7 +227,25 @@ function StageModal({ template, actionsSchema, composeBase, existingStagedId, ex
   );
   const [customEnv, setCustomEnv] = useState<CustomEnvEntry[]>([]);
   const [customStorage, setCustomStorage] = useState<CustomStorageEntry[]>([]);
-  const [queuedActions, setQueuedActions] = useState<QueuedAction[]>(existingActions ?? []);
+  const [queuedActions, setQueuedActions] = useState<QueuedAction[]>(() => {
+    if (existingActions !== null) return existingActions;
+    if (!actionsSchema) return [];
+    const defaults: QueuedAction[] = [];
+    for (const actionDef of actionsSchema.actions) {
+      for (const variant of actionDef.variants) {
+        if (variant.enabled_by_default) {
+          defaults.push({
+            action_id: actionDef.id,
+            variant_id: variant.id,
+            fields: Object.fromEntries(variant.fields.map(f => [f.id, f.default ?? ""])),
+            label: actionDef.label,
+            variant_label: variant.label,
+          });
+        }
+      }
+    }
+    return defaults;
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
