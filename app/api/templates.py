@@ -139,7 +139,8 @@ async def check_installable(slug: str):
 
 
 @router.get("/{slug}/actions")
-async def get_template_actions(slug: str):    async with get_db() as db:
+async def get_template_actions(slug: str):
+    async with get_db() as db:
         # Single query: look up the latest version for the slug
         async with db.execute("""
             SELECT v.actions_definitions, v.version, t.latest_version
