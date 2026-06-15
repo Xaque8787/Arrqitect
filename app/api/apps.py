@@ -7,7 +7,6 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from app.db.client import get_db
 from app.services.job_runner import enqueue_job, snapshot_app, enqueue_rollback
-from app.services.ecb_legacy import preview_app
 
 router = APIRouter(prefix="/api/apps", tags=["apps"])
 
@@ -204,30 +203,47 @@ async def remove_app(app_id: str):
 
 @router.post("/{app_id}/preview")
 async def preview(app_id: str):
+    from pathlib import Path
     async with get_db() as db:
-        async with db.execute("""
-            SELECT a.*,
-                   v.compose AS compose_template,
-                   v.config_schema, v.hook_definitions, v.provides,
-                   t.slug AS t_slug
-            FROM installed_apps a
-            JOIN app_templates t ON t.id = a.template_id
-            LEFT JOIN template_versions v ON v.id = a.template_version_id
-            WHERE a.id = ?
-        """, (app_id,)) as cur:
+        async with db.execute(
+            "SELECT id, slug, config, compose_path FROM installed_apps WHERE id = ?",
+            (app_id,),
+        ) as cur:
             row = await cur.fetchone()
 
     if not row:
         raise HTTPException(status_code=404, detail="App not found")
 
-    d = _app_row(row)
-    d["app_templates"] = {
-        "compose_template": d.pop("compose_template", ""),
-        "config_schema": json.loads(d.pop("config_schema")) if isinstance(d.get("config_schema"), str) else d.pop("config_schema", []),
-        "hook_definitions": json.loads(d.pop("hook_definitions")) if isinstance(d.get("hook_definitions"), str) else d.pop("hook_definitions", {}),
-        "provides": json.loads(d.pop("provides")) if isinstance(d.get("provides"), str) else d.pop("provides", []),
+    d = dict(row)
+    config = json.loads(d["config"]) if isinstance(d["config"], str) else (d["config"] or {})
+    compose_path = d.get("compose_path") or ""
+
+    compose_rendered = ""
+    compose_ok = False
+    compose_error: str | None = None
+
+    if not compose_path:
+        compose_error = "No compose file recorded — app may still be installing."
+    else:
+        try:
+            compose_rendered = Path(compose_path).read_text()
+            compose_ok = True
+        except FileNotFoundError:
+            compose_error = f"Compose file not found at {compose_path}"
+        except Exception as exc:
+            compose_error = str(exc)
+
+    return {
+        "app_id": app_id,
+        "slug": d["slug"],
+        "config": config,
+        "compose_rendered": compose_rendered,
+        "compose_ok": compose_ok,
+        "compose_error": compose_error,
+        "hook_steps": [],
+        "host_compose_path": compose_path,
+        "compose_base": "",
     }
-    return await preview_app(d)
 
 
 # --- Action CRUD ---
@@ -467,7 +483,7 @@ async def container_logs(
     if not compose_path:
         return {"lines": [], "service": service, "fetched_at": _utcnow()}
 
-    cmd = ["docker", "compose", "-f", compose_path, "logs", "--no-follow", f"--tail={lines}"]
+    cmd = ["docker", "compose", "-f", compose_path, "logs", f"--tail={lines}"]
     if service:
         cmd.append(service)
 

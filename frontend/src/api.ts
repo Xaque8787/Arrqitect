@@ -169,6 +169,11 @@ export interface PreviewResult {
   compose_base: string;
 }
 
+export interface InstallabilityCheck {
+  installable: boolean;
+  missing: { key: string; required: boolean }[];
+}
+
 export interface GlobalSettings {
   timezone: string;
   puid: string;
@@ -272,6 +277,7 @@ export const api = {
     get: (slug: string) => req<AppTemplate>(`/api/templates/${slug}`),
     versions: (slug: string) => req<TemplateVersion[]>(`/api/templates/${slug}/versions`),
     actions: (slug: string) => req<ActionsSchema>(`/api/templates/${slug}/actions`),
+    checkInstallable: (slug: string) => req<InstallabilityCheck>(`/api/templates/${slug}/installable`),
     sync: (repo_url?: string) =>
       req<SyncResult>("/api/templates/sync", {
         method: "POST",

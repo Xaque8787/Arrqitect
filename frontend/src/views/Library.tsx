@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Package, RefreshCw, CircleCheck as CheckCircle, CircleAlert as AlertCircle, X, Plus, ChevronRight, ChevronLeft, Zap } from "lucide-react";
 import { api, resolveHostPath, fieldPlaceholder } from "../api";
 import { useQueue } from "../QueueContext";
@@ -214,10 +215,10 @@ function ActionsStep({ actionsSchema, queued, onChange }: { actionsSchema: Actio
   );
 }
 
-function StageModal({ template, actionsSchema, composeBase, existingStagedId, existingConfig, existingActions, onClose, onStaged }: {
+function StageModal({ template, actionsSchema, composeBase, existingStagedId, existingConfig, existingActions, onClose, onStaged, onInstalled }: {
   template: AppTemplate; actionsSchema: ActionsSchema | null; composeBase: string | null;
   existingStagedId: string | null; existingConfig: Record<string, string> | null; existingActions: QueuedAction[] | null;
-  onClose: () => void; onStaged: () => void;
+  onClose: () => void; onStaged: () => void; onInstalled: (jobId: string) => void;
 }) {
   const [step, setStep] = useState<"config" | "actions">("config");
   const [name, setName] = useState(template.name);
@@ -229,6 +230,8 @@ function StageModal({ template, actionsSchema, composeBase, existingStagedId, ex
   const [queuedActions, setQueuedActions] = useState<QueuedAction[]>(existingActions ?? []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [installWarning, setInstallWarning] = useState<{ key: string; required: boolean }[] | null>(null);
 
   const isEditing = !!existingStagedId;
   const hasActions = actionsSchema && actionsSchema.actions.length > 0;
@@ -260,6 +263,38 @@ function StageModal({ template, actionsSchema, composeBase, existingStagedId, ex
   };
 
   const handleConfigNext = (e: React.FormEvent) => { e.preventDefault(); hasActions ? setStep("actions") : handleSave(); };
+
+  const handleInstall = async (skipCheck = false) => {
+    setInstalling(true);
+    setError(null);
+    try {
+      if (!skipCheck) {
+        const check = await api.templates.checkInstallable(template.slug).catch(() => ({ installable: true, missing: [] as { key: string; required: boolean }[] }));
+        if (check.missing.length > 0 && installWarning === null) {
+          setInstallWarning(check.missing);
+          setInstalling(false);
+          return;
+        }
+      }
+      const { config: rc, actions } = buildPayload();
+      const { job } = await api.apps.install(template.slug, name, rc, undefined, actions);
+      onInstalled(job.id);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Install failed");
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const handleInstallButtonClick = (e: React.MouseEvent) => {
+    if (!installWarning) {
+      const form = (e.currentTarget as HTMLElement).closest("form") as HTMLFormElement | null;
+      if (form && !form.checkValidity()) { form.reportValidity(); return; }
+      void handleInstall(false);
+    } else {
+      void handleInstall(true);
+    }
+  };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -296,11 +331,25 @@ function StageModal({ template, actionsSchema, composeBase, existingStagedId, ex
                 </details>
               )}
               {error && <div className="form-error">{error}</div>}
+              {installWarning && (
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 12px", background: "var(--color-warning-dim, rgba(234,179,8,0.1))", border: "1px solid rgba(234,179,8,0.3)", borderRadius: 6, marginBottom: 8, fontSize: 12 }}>
+                  <AlertCircle size={13} style={{ color: "var(--color-warning)", marginTop: 1, flexShrink: 0 }} />
+                  <span style={{ color: "var(--color-text-muted)", flex: 1 }}>
+                    {[...new Set(installWarning.map(m => m.key.split(".")[0]))].join(", ")} not installed — some auto-configuration will be skipped.
+                  </span>
+                  <button type="button" className="custom-row-remove" onClick={() => setInstallWarning(null)} style={{ marginLeft: 4 }}><X size={12} /></button>
+                </div>
+              )}
               <div className="modal-actions">
                 <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={loading}>
+                <button type="submit" className="btn btn-primary" disabled={loading || installing}>
                   {loading ? <span className="spinner" /> : hasActions ? <><span>Next</span><ChevronRight size={14} /></> : isEditing ? "Save Changes" : "Add to Queue"}
                 </button>
+                {!isEditing && !hasActions && (
+                  <button type="button" className="btn btn-primary" onClick={handleInstallButtonClick} disabled={installing || loading}>
+                    {installing ? <span className="spinner" /> : installWarning ? "Install Anyway" : "Install"}
+                  </button>
+                )}
               </div>
             </form>
           </>
@@ -310,12 +359,26 @@ function StageModal({ template, actionsSchema, composeBase, existingStagedId, ex
           <>
             <ActionsStep actionsSchema={actionsSchema} queued={queuedActions} onChange={setQueuedActions} />
             {error && <div className="form-error">{error}</div>}
+            {installWarning && (
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 12px", background: "var(--color-warning-dim, rgba(234,179,8,0.1))", border: "1px solid rgba(234,179,8,0.3)", borderRadius: 6, marginBottom: 8, fontSize: 12 }}>
+                <AlertCircle size={13} style={{ color: "var(--color-warning)", marginTop: 1, flexShrink: 0 }} />
+                <span style={{ color: "var(--color-text-muted)", flex: 1 }}>
+                  {[...new Set(installWarning.map(m => m.key.split(".")[0]))].join(", ")} not installed — some auto-configuration will be skipped.
+                </span>
+                <button type="button" className="custom-row-remove" onClick={() => setInstallWarning(null)} style={{ marginLeft: 4 }}><X size={12} /></button>
+              </div>
+            )}
             <div className="modal-actions">
               <button type="button" className="btn btn-ghost" onClick={() => setStep("config")}><ChevronLeft size={14} /> Back</button>
-              <button type="button" className="btn btn-ghost" onClick={handleSave} disabled={loading}>{loading ? <span className="spinner" /> : isEditing ? "Save (no actions)" : "Skip & Queue"}</button>
-              <button type="button" className="btn btn-primary" onClick={handleSave} disabled={loading}>
+              <button type="button" className="btn btn-ghost" onClick={handleSave} disabled={loading || installing}>{loading ? <span className="spinner" /> : isEditing ? "Save (no actions)" : "Skip & Queue"}</button>
+              <button type="button" className="btn btn-primary" onClick={handleSave} disabled={loading || installing}>
                 {loading ? <span className="spinner" /> : isEditing ? "Save Changes" : `Add to Queue${queuedActions.length > 0 ? ` + ${queuedActions.length} action${queuedActions.length !== 1 ? "s" : ""}` : ""}`}
               </button>
+              {!isEditing && (
+                <button type="button" className="btn btn-primary" onClick={handleInstallButtonClick} disabled={installing || loading}>
+                  {installing ? <span className="spinner" /> : installWarning ? "Install Anyway" : "Install"}
+                </button>
+              )}
             </div>
           </>
         )}
@@ -346,6 +409,7 @@ function SyncStatusBanner({ result, onDismiss }: { result: SyncResult; onDismiss
 }
 
 export default function Library() {
+  const navigate = useNavigate();
   const [templates, setTemplates] = useState<AppTemplate[]>([]);
   const [installedSlugs, setInstalledSlugs] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -468,6 +532,7 @@ export default function Library() {
           existingStagedId={stagingExistingId} existingConfig={stagingExistingConfig} existingActions={stagingExistingActions}
           onClose={() => { setStaging(null); setStagingActions(null); }}
           onStaged={() => { setStaging(null); setStagingActions(null); refreshQueue(); }}
+          onInstalled={(jobId) => { setStaging(null); setStagingActions(null); navigate(`/jobs/${jobId}`); }}
         />
       )}
     </div>

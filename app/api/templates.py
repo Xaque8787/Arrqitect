@@ -83,9 +83,63 @@ async def trigger_sync(req: SyncRequest = SyncRequest()):
     return result
 
 
-@router.get("/{slug}/actions")
-async def get_template_actions(slug: str):
+@router.get("/{slug}/installable")
+async def check_installable(slug: str):
+    """Check whether a template's consumes dependencies are satisfied by running apps."""
     async with get_db() as db:
+        async with db.execute("""
+            SELECT v.consumes
+            FROM app_templates t
+            LEFT JOIN template_versions v ON v.template_id = t.id
+            WHERE t.slug = ?
+            ORDER BY v.created_at DESC
+            LIMIT 1
+        """, (slug,)) as cur:
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    consumes_raw = row["consumes"] if row else None
+    consumes = json.loads(consumes_raw) if isinstance(consumes_raw, str) else (consumes_raw or [])
+
+    if not consumes:
+        return {"installable": True, "missing": []}
+
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT v.provides
+            FROM installed_apps a
+            LEFT JOIN template_versions v ON v.id = a.template_version_id
+            WHERE a.state IN ('running', 'stopped')
+        """) as cur:
+            prows = await cur.fetchall()
+
+    provided_keys: set[str] = set()
+    for prow in prows:
+        provides_raw = prow["provides"]
+        provides = json.loads(provides_raw) if isinstance(provides_raw, str) else (provides_raw or [])
+        if isinstance(provides, list):
+            for p in provides:
+                key = p.get("key") if isinstance(p, dict) else str(p)
+                if key:
+                    provided_keys.add(key)
+
+    missing = []
+    for c in consumes:
+        if not isinstance(c, dict):
+            continue
+        key = c.get("key", "")
+        if not key:
+            continue
+        if key not in provided_keys:
+            missing.append({"key": key, "required": bool(c.get("required", False))})
+
+    return {"installable": len(missing) == 0, "missing": missing}
+
+
+@router.get("/{slug}/actions")
+async def get_template_actions(slug: str):    async with get_db() as db:
         # Single query: look up the latest version for the slug
         async with db.execute("""
             SELECT v.actions_definitions, v.version, t.latest_version

@@ -8,7 +8,7 @@ function PreviewModal({ result, onClose }: { result: PreviewResult; onClose: () 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" style={{ width: 640 }} onClick={e => e.stopPropagation()}>
-        <div className="modal-title">Dry Run Preview — {result.slug}</div>
+        <div className="modal-title">Compose Preview — {result.slug}</div>
 
         <div className="detail-section-title">Resolved Config</div>
         <table className="config-table" style={{ marginBottom: 16 }}>
@@ -27,20 +27,7 @@ function PreviewModal({ result, onClose }: { result: PreviewResult; onClose: () 
           <pre className="preview-compose">{result.compose_rendered}</pre>
         ) : (
           <div style={{ color: "var(--color-error)", fontSize: 13, marginBottom: 12 }}>
-            Render error: {result.compose_error}
-          </div>
-        )}
-
-        <div className="detail-section-title" style={{ marginTop: 16 }}>Hook Steps</div>
-        {result.hook_steps.length === 0 ? (
-          <div style={{ color: "var(--color-text-dim)", fontSize: 13 }}>No hooks defined</div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {result.hook_steps.map(h => (
-              <div key={h.hook} style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
-                <span style={{ color: "var(--color-primary)", fontWeight: 600 }}>{h.hook}</span>: {h.action}
-              </div>
-            ))}
+            {result.compose_error ?? "Compose file unavailable."}
           </div>
         )}
 
