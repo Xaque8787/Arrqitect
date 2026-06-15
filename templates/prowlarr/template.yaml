@@ -3,7 +3,7 @@ schema_version: 2
 app:
   id: prowlarr
   name: Prowlarr
-  version: "1.0.1"
+  version: "1.0.0"
   flavor: linuxserver
   allow_custom_env: true
   allow_custom_storage: true
