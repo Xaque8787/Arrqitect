@@ -96,11 +96,13 @@ CREATE TABLE IF NOT EXISTS jobs (
     id               TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     installed_app_id TEXT REFERENCES installed_apps(id) ON DELETE SET NULL,
     type             TEXT NOT NULL
-                         CHECK (type IN ('install','update','remove','reconcile','preview','bulk_install')),
+                         CHECK (type IN ('install','update','remove','reconcile','preview','bulk_install','rollback')),
     status           TEXT NOT NULL DEFAULT 'pending'
                          CHECK (status IN ('pending','running','success','degraded','failed','cancelled','obsolete')),
     dry_run          INTEGER NOT NULL DEFAULT 0,
     is_reconcile     INTEGER NOT NULL DEFAULT 0,
+    bulk_app_ids     TEXT NOT NULL DEFAULT '[]',
+    meta             TEXT NOT NULL DEFAULT '{}',
     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -180,6 +182,19 @@ CREATE TABLE IF NOT EXISTS app_actions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_app_actions_app ON app_actions (app_id);
+
+CREATE TABLE IF NOT EXISTS app_snapshots (
+    id                  TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    installed_app_id    TEXT NOT NULL REFERENCES installed_apps(id) ON DELETE CASCADE,
+    template_version_id TEXT,
+    config              TEXT NOT NULL DEFAULT '{}',
+    ir_hash             TEXT NOT NULL DEFAULT '',
+    compose_hash        TEXT NOT NULL DEFAULT '',
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_snapshots_app_created
+    ON app_snapshots (installed_app_id, created_at DESC);
 """
 
 
