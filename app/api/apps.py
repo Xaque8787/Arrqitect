@@ -1,9 +1,12 @@
+import asyncio
 import json
 import secrets
-from fastapi import APIRouter, HTTPException
+import subprocess
+from datetime import datetime, timezone
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from app.db.client import get_db
-from app.services.job_runner import enqueue_job
+from app.services.job_runner import enqueue_job, snapshot_app, enqueue_rollback
 from app.services.ecb_legacy import preview_app
 
 router = APIRouter(prefix="/api/apps", tags=["apps"])
@@ -169,6 +172,11 @@ async def update_config(app_id: str, req: UpdateConfigRequest):
         async with db.execute("SELECT id FROM installed_apps WHERE id = ?", (app_id,)) as cur:
             if not await cur.fetchone():
                 raise HTTPException(status_code=404, detail="App not found")
+
+    # Snapshot current state before mutating
+    await snapshot_app(app_id)
+
+    async with get_db() as db:
         await db.execute(
             "UPDATE installed_apps SET config = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
             (json.dumps(req.config), app_id),
@@ -317,3 +325,159 @@ async def run_app_action(app_id: str, action_record_id: str):
 
     degraded = await run_action(app_id, record, action_def, variant_def, "", None)
     return {"ok": not degraded, "degraded": degraded}
+
+
+# --- Snapshots & Rollback ---
+
+@router.get("/{app_id}/snapshots")
+async def list_snapshots(app_id: str):
+    async with get_db() as db:
+        async with db.execute("SELECT id FROM installed_apps WHERE id = ?", (app_id,)) as cur:
+            if not await cur.fetchone():
+                raise HTTPException(status_code=404, detail="App not found")
+        async with db.execute(
+            """SELECT s.id, s.installed_app_id, s.template_version_id,
+                      s.config, s.ir_hash, s.compose_hash, s.created_at,
+                      v.version AS version_label
+               FROM app_snapshots s
+               LEFT JOIN template_versions v ON v.id = s.template_version_id
+               WHERE s.installed_app_id = ?
+               ORDER BY s.created_at DESC""",
+            (app_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    result = []
+    for row in rows:
+        d = dict(row)
+        if isinstance(d.get("config"), str):
+            try:
+                d["config"] = json.loads(d["config"])
+            except Exception:
+                d["config"] = {}
+        result.append(d)
+    return result
+
+
+@router.post("/{app_id}/rollback/{snapshot_id}")
+async def rollback_to_snapshot(app_id: str, snapshot_id: str):
+    async with get_db() as db:
+        async with db.execute("SELECT id FROM installed_apps WHERE id = ?", (app_id,)) as cur:
+            if not await cur.fetchone():
+                raise HTTPException(status_code=404, detail="App not found")
+        async with db.execute(
+            "SELECT id FROM app_snapshots WHERE id = ? AND installed_app_id = ?",
+            (snapshot_id, app_id),
+        ) as cur:
+            if not await cur.fetchone():
+                raise HTTPException(status_code=404, detail="Snapshot not found")
+
+    try:
+        job = await enqueue_rollback(app_id, snapshot_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"job": job}
+
+
+# --- Container observability ---
+
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@router.get("/{app_id}/status")
+async def container_status(app_id: str):
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT compose_path, state FROM installed_apps WHERE id = ?", (app_id,)
+        ) as cur:
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    d = dict(row)
+    compose_path = d.get("compose_path", "")
+
+    if not compose_path or d["state"] in ("staged", "installing", "removing"):
+        return {"services": [], "available": False}
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: subprocess.run(
+            ["docker", "compose", "-f", compose_path, "ps", "--format", "json", "-a"],
+            capture_output=True, text=True, timeout=30,
+        ),
+    )
+
+    if result.returncode != 0:
+        return {"services": [], "available": False, "error": result.stderr.strip() or "docker compose ps failed"}
+
+    services = []
+    raw = result.stdout.strip()
+    if raw.startswith("["):
+        # Some Docker versions return a JSON array
+        try:
+            items = json.loads(raw)
+        except Exception:
+            items = []
+        for svc in items:
+            services.append(_parse_service(svc))
+    else:
+        # Newer Docker versions return one JSON object per line
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                services.append(_parse_service(json.loads(line)))
+            except Exception:
+                pass
+
+    return {"services": services, "available": True}
+
+
+def _parse_service(svc: dict) -> dict:
+    return {
+        "name": svc.get("Service") or svc.get("Name", ""),
+        "state": svc.get("State", ""),
+        "status": svc.get("Status", ""),
+        "image": svc.get("Image", ""),
+        "ports": svc.get("Publishers", []),
+    }
+
+
+@router.get("/{app_id}/logs")
+async def container_logs(
+    app_id: str,
+    service: str | None = Query(default=None),
+    lines: int = Query(default=200, ge=1, le=2000),
+):
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT compose_path FROM installed_apps WHERE id = ?", (app_id,)
+        ) as cur:
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    compose_path = dict(row).get("compose_path", "")
+    if not compose_path:
+        return {"lines": [], "service": service, "fetched_at": _utcnow()}
+
+    cmd = ["docker", "compose", "-f", compose_path, "logs", "--no-follow", f"--tail={lines}"]
+    if service:
+        cmd.append(service)
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=30),
+    )
+
+    output = (result.stdout + result.stderr).strip()
+    log_lines = output.splitlines() if output else []
+
+    return {"lines": log_lines, "service": service, "fetched_at": _utcnow()}

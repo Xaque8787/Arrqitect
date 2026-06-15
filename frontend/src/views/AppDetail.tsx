@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, Trash2, Eye, RefreshCw, X, Plus, Zap, Play, CircleArrowUp as ArrowUpCircle } from "lucide-react";
+import { ArrowLeft, Trash2, Eye, RefreshCw, X, Plus, Zap, Play, CircleArrowUp as ArrowUpCircle, RotateCcw, Monitor, ScrollText } from "lucide-react";
 import { api, resolveHostPath, fieldPlaceholder } from "../api";
-import type { InstalledApp, ConfigField, PreviewResult, CustomEnvEntry, CustomStorageEntry, ActionsSchema, ActionDef, ActionVariantDef, ActionFieldDef, AppActionRecord, TemplateUpdatePreview, Job } from "../api";
+import type { InstalledApp, ConfigField, PreviewResult, CustomEnvEntry, CustomStorageEntry, ActionsSchema, ActionDef, ActionVariantDef, ActionFieldDef, AppActionRecord, TemplateUpdatePreview, Job, AppSnapshot, ContainerStatus, ContainerService } from "../api";
 
 function PreviewModal({ result, onClose }: { result: PreviewResult; onClose: () => void }) {
   return (
@@ -427,13 +427,24 @@ export default function AppDetail() {
   const [updatePreview, setUpdatePreview] = useState<TemplateUpdatePreview | null>(null);
   const [loadingUpdate, setLoadingUpdate] = useState(false);
   const [committingUpdate, setCommittingUpdate] = useState(false);
+  const [snapshots, setSnapshots] = useState<AppSnapshot[]>([]);
+  const [containerStatus, setContainerStatus] = useState<ContainerStatus | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState(false);
+  const [logModal, setLogModal] = useState<{ service: string | null } | null>(null);
 
   const load = () => {
     if (!id) return;
     api.apps.get(id).then(setApp).finally(() => setLoading(false));
+    api.apps.snapshots(id).then(setSnapshots).catch(() => {});
   };
 
   useEffect(load, [id]);
+
+  useEffect(() => {
+    if (app && id && (app.state === "running" || app.state === "stopped")) {
+      loadContainerStatus();
+    }
+  }, [app?.id, app?.state]);
 
   useEffect(() => {
     api.settings.composeBase().then(r => {
@@ -476,6 +487,22 @@ export default function AppDetail() {
     } catch {
       setCommittingUpdate(false);
     }
+  };
+
+  const handleRollback = async (snapshotId: string) => {
+    if (!app || !confirm("Roll back to this version? The app will be redeployed with the previous configuration.")) return;
+    try {
+      const { job } = await api.apps.rollback(app.id, snapshotId);
+      navigate(`/jobs/${job.id}`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Rollback failed");
+    }
+  };
+
+  const loadContainerStatus = () => {
+    if (!id) return;
+    setLoadingStatus(true);
+    api.apps.containerStatus(id).then(setContainerStatus).finally(() => setLoadingStatus(false));
   };
 
   if (loading) return <div className="loading-center"><div className="spinner" /></div>;
@@ -564,6 +591,25 @@ export default function AppDetail() {
         </div>
       )}
 
+      {(app.state === "running" || app.state === "stopped") && (
+        <div className="detail-section">
+          <div className="detail-section-title" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Monitor size={14} style={{ color: "var(--color-text-dim)" }} />
+              <span>Containers</span>
+            </div>
+            <button className="btn btn-ghost btn-sm" onClick={loadContainerStatus} disabled={loadingStatus}>
+              {loadingStatus ? <span className="spinner" style={{ width: 13, height: 13 }} /> : <RefreshCw size={13} />}
+              Refresh
+            </button>
+          </div>
+          <ContainerStatusSection
+            status={containerStatus}
+            onViewLogs={(service) => setLogModal({ service })}
+          />
+        </div>
+      )}
+
       <div className="detail-section">
         <div className="detail-section-title">
           <Link to={`/jobs?app_id=${app.id}`} style={{ color: "inherit" }}>Recent Jobs</Link>
@@ -571,9 +617,26 @@ export default function AppDetail() {
         <AppJobs appId={app.id} />
       </div>
 
+      {snapshots.length > 0 && (
+        <div className="detail-section">
+          <div className="detail-section-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <RotateCcw size={14} style={{ color: "var(--color-text-dim)" }} />
+            <span>Version History</span>
+          </div>
+          <SnapshotHistory snapshots={snapshots} onRollback={handleRollback} />
+        </div>
+      )}
+
       <AppActionsSection app={app} />
 
       {preview && <PreviewModal result={preview} onClose={() => setPreview(null)} />}
+      {logModal && id && (
+        <LogModal
+          appId={id}
+          service={logModal.service}
+          onClose={() => setLogModal(null)}
+        />
+      )}
       {editOpen && (
         <EditConfigModal
           app={app}
@@ -871,6 +934,159 @@ function AppActionsSection({ app }: { app: InstalledApp }) {
   );
 }
 
+function ContainerStatusSection({
+  status,
+  onViewLogs,
+}: {
+  status: ContainerStatus | null;
+  onViewLogs: (service: string) => void;
+}) {
+  if (!status) {
+    return (
+      <div style={{ color: "var(--color-text-dim)", fontSize: 13 }}>
+        Loading container status...
+      </div>
+    );
+  }
+  if (!status.available) {
+    return (
+      <div style={{ color: "var(--color-text-dim)", fontSize: 13 }}>
+        {status.error ?? "Container info not available."}
+      </div>
+    );
+  }
+  if (status.services.length === 0) {
+    return <div style={{ color: "var(--color-text-dim)", fontSize: 13 }}>No containers found.</div>;
+  }
+
+  const stateColor = (state: string) => {
+    if (state === "running") return "var(--color-success)";
+    if (state === "exited" || state === "dead") return "var(--color-error)";
+    return "var(--color-warning)";
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {status.services.map((svc: ContainerService) => (
+        <div key={svc.name} className="card" style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 8, height: 8, borderRadius: "50%", background: stateColor(svc.state), flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text)" }}>{svc.name}</div>
+            {svc.status && (
+              <div style={{ fontSize: 11, color: "var(--color-text-dim)", marginTop: 1 }}>{svc.status}</div>
+            )}
+          </div>
+          <span style={{ fontSize: 11, color: stateColor(svc.state), fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.4px" }}>
+            {svc.state}
+          </span>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => onViewLogs(svc.name)}
+            title="View logs"
+          >
+            <ScrollText size={13} /> Logs
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
+function LogModal({
+  appId,
+  service,
+  onClose,
+}: {
+  appId: string;
+  service: string | null;
+  onClose: () => void;
+}) {
+  const [lines, setLines] = useState<string[]>([]);
+  const [fetching, setFetching] = useState(false);
+  const [fetchedAt, setFetchedAt] = useState<string | null>(null);
+
+  const fetchLogs = () => {
+    setFetching(true);
+    api.apps.containerLogs(appId, service ?? undefined).then(result => {
+      setLines(result.lines);
+      setFetchedAt(result.fetched_at);
+    }).finally(() => setFetching(false));
+  };
+
+  useEffect(() => { fetchLogs(); }, [appId, service]);
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" style={{ width: 740, maxHeight: "80vh", display: "flex", flexDirection: "column" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div className="modal-title" style={{ marginBottom: 0 }}>
+            Logs{service ? ` — ${service}` : ""}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {fetchedAt && (
+              <span style={{ fontSize: 11, color: "var(--color-text-dim)" }}>
+                Fetched {new Date(fetchedAt).toLocaleTimeString()}
+              </span>
+            )}
+            <button className="btn btn-ghost btn-sm" onClick={fetchLogs} disabled={fetching}>
+              {fetching ? <span className="spinner" style={{ width: 13, height: 13 }} /> : <RefreshCw size={13} />}
+              Refresh
+            </button>
+          </div>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+          {lines.length === 0 ? (
+            <div style={{ color: "var(--color-text-dim)", fontSize: 13, padding: "8px 0" }}>
+              {fetching ? "Fetching logs..." : "No log output."}
+            </div>
+          ) : (
+            <pre className="log-snapshot">{lines.join("\n")}</pre>
+          )}
+        </div>
+        <div className="modal-actions" style={{ marginTop: 12 }}>
+          <button className="btn btn-ghost" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function SnapshotHistory({
+  snapshots,
+  onRollback,
+}: {
+  snapshots: AppSnapshot[];
+  onRollback: (id: string) => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {snapshots.map(snap => (
+        <div key={snap.id} className="card" style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+          <RotateCcw size={13} style={{ color: "var(--color-text-dim)", flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text)" }}>
+              {snap.version_label ?? "Unknown version"}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--color-text-dim)", marginTop: 1 }}>
+              {new Date(snap.created_at).toLocaleString()}
+            </div>
+          </div>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => onRollback(snap.id)}
+            title="Roll back to this version"
+          >
+            <RotateCcw size={13} /> Rollback
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
 function AppJobs({ appId }: { appId: string }) {
   const [jobs, setJobs] = useState<ReturnType<typeof api.jobs.list> extends Promise<infer T> ? T : never>([]);
   const navigate = useNavigate();
@@ -883,8 +1099,11 @@ function AppJobs({ appId }: { appId: string }) {
     return <div style={{ color: "var(--color-text-dim)", fontSize: 13 }}>No jobs yet.</div>;
   }
 
-  const displayType = (job: Job) =>
-    job.type === "bulk_install" ? "install" : job.type;
+  const displayType = (job: Job) => {
+    if (job.type === "bulk_install") return "install";
+    if (job.type === "rollback") return "rollback";
+    return job.type;
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

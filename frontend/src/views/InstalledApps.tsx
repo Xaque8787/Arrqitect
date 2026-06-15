@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Server } from "lucide-react";
+import { Server, CircleArrowUp as ArrowUpCircle } from "lucide-react";
 import { api } from "../api";
 import type { InstalledApp } from "../api";
 
@@ -14,6 +14,12 @@ export default function InstalledApps() {
 
   if (loading) return <div className="loading-center"><div className="spinner" /></div>;
 
+  const updatesAvailable = apps.filter(
+    a => a.app_templates?.installed_version &&
+         a.app_templates?.latest_version &&
+         a.app_templates.installed_version !== a.app_templates.latest_version
+  );
+
   return (
     <div>
       <div className="page-header">
@@ -23,6 +29,22 @@ export default function InstalledApps() {
         </div>
         <Link to="/library" className="btn btn-primary btn-sm">+ Install App</Link>
       </div>
+
+      {updatesAvailable.length > 0 && (
+        <div className="updates-banner">
+          <ArrowUpCircle size={18} style={{ color: "var(--color-primary)", flexShrink: 0 }} />
+          <div style={{ flex: 1, fontSize: 13, color: "var(--color-primary)", fontWeight: 600 }}>
+            {updatesAvailable.length} app{updatesAvailable.length !== 1 ? "s have" : " has"} updates available
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {updatesAvailable.map(a => (
+              <Link key={a.id} to={`/apps/${a.id}`} className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>
+                {a.name}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {apps.length === 0 ? (
         <div className="empty-state">

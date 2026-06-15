@@ -291,7 +291,7 @@ class CommitUpdateRequest(BaseModel):
 
 @router.post("/app-update/{app_id}/commit")
 async def commit_template_update(app_id: str, req: CommitUpdateRequest = CommitUpdateRequest()):
-    from app.services.job_runner import enqueue_job
+    from app.services.job_runner import enqueue_job, snapshot_app
 
     async with get_db() as db:
         async with db.execute("""
@@ -313,6 +313,9 @@ async def commit_template_update(app_id: str, req: CommitUpdateRequest = CommitU
 
     current_config = _parse_json(d.get("config"), {})
     merged_config = {**current_config, **req.extra_config}
+
+    # Snapshot current state before mutating template_version_id and config
+    await snapshot_app(app_id)
 
     async with get_db() as db:
         await db.execute(

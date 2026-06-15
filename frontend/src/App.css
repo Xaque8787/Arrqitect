@@ -406,3 +406,28 @@ details[open] .advanced-section-toggle::before { transform: rotate(90deg); }
 .form-input:disabled {
   opacity: 0.5; cursor: not-allowed;
 }
+
+/* Updates banner */
+.updates-banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; background: var(--color-primary-dim);
+  border-radius: var(--radius-md); border: 1px solid var(--color-border);
+  margin-bottom: 20px;
+}
+
+/* Log snapshot (container logs) */
+.log-snapshot {
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 11px; line-height: 1.6;
+  color: var(--color-text-muted);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  white-space: pre-wrap; word-break: break-all;
+  margin: 0;
+}
+
+/* badge-rollback */
+.badge-rollback { background: var(--color-surface-3); color: var(--color-text-dim); }
+

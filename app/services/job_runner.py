@@ -74,6 +74,79 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+async def snapshot_app(app_id: str) -> str:
+    """
+    Capture the current installed_apps state into app_snapshots before an update.
+    Returns the new snapshot id. Prunes the app's snapshots to the 5 most recent.
+    """
+    snapshot_id = secrets.token_hex(16)
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT template_version_id, config, ir_hash, compose_hash FROM installed_apps WHERE id = ?",
+            (app_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return snapshot_id
+
+        d = dict(row)
+        await db.execute(
+            """INSERT INTO app_snapshots
+                   (id, installed_app_id, template_version_id, config, ir_hash, compose_hash)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                snapshot_id, app_id,
+                d.get("template_version_id"),
+                d.get("config") or "{}",
+                d.get("ir_hash") or "",
+                d.get("compose_hash") or "",
+            ),
+        )
+        # Prune: keep only the 5 most recent snapshots for this app
+        await db.execute(
+            """DELETE FROM app_snapshots
+               WHERE installed_app_id = ?
+                 AND id NOT IN (
+                     SELECT id FROM app_snapshots
+                     WHERE installed_app_id = ?
+                     ORDER BY created_at DESC
+                     LIMIT 5
+                 )""",
+            (app_id, app_id),
+        )
+        await db.commit()
+    return snapshot_id
+
+
+async def enqueue_rollback(app_id: str, snapshot_id: str) -> dict:
+    """Create and start a rollback job targeting a specific snapshot."""
+    job_id = secrets.token_hex(16)
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT id FROM app_snapshots WHERE id = ? AND installed_app_id = ?",
+            (snapshot_id, app_id),
+        ) as cur:
+            if not await cur.fetchone():
+                raise ValueError(f"Snapshot {snapshot_id!r} not found for app {app_id!r}")
+
+        async with db.execute(
+            "SELECT id FROM jobs WHERE installed_app_id = ? AND type = 'rollback' AND status IN ('pending','running') LIMIT 1",
+            (app_id,),
+        ) as cur:
+            if await cur.fetchone():
+                raise ValueError("A rollback job is already pending or running for this app")
+
+        await db.execute(
+            """INSERT INTO jobs (id, installed_app_id, type, status, dry_run, is_reconcile, meta)
+               VALUES (?, ?, 'rollback', 'pending', 0, 0, ?)""",
+            (job_id, app_id, json.dumps({"snapshot_id": snapshot_id})),
+        )
+        await db.commit()
+
+    asyncio.create_task(_run_job(job_id, app_id, "rollback", False))
+    return {"id": job_id, "type": "rollback", "status": "pending"}
+
+
 async def enqueue_bulk_install(ordered_app_ids: list[str]) -> dict:
     """Create and start a bulk_install job for a list of app ids (in install order)."""
     job_id = secrets.token_hex(16)
@@ -289,6 +362,15 @@ async def _run_job(job_id: str, app_id: str, job_type: str, dry_run: bool) -> No
             has_degraded = await _run_update(job_id, app_id, app, dry_run)
         elif job_type == "remove":
             await _run_remove(job_id, app_id, app, dry_run)
+        elif job_type == "rollback":
+            async with get_db() as db:
+                async with db.execute("SELECT meta FROM jobs WHERE id = ?", (job_id,)) as cur:
+                    job_row = await cur.fetchone()
+            meta = json.loads(dict(job_row)["meta"]) if job_row else {}
+            snapshot_id = meta.get("snapshot_id")
+            if not snapshot_id:
+                raise RuntimeError("Rollback job missing snapshot_id in meta")
+            has_degraded = await _run_rollback(job_id, app_id, snapshot_id)
         else:
             await _add_step(job_id, job_type, StepStatus.SKIPPED.value,
                             f"Job type '{job_type}' not implemented", finished_at=_now())
@@ -300,6 +382,62 @@ async def _run_job(job_id: str, app_id: str, job_type: str, dry_run: bool) -> No
         await _add_step(job_id, "error", StepStatus.FAILED.value, str(exc), finished_at=_now())
         await _set_job_status(job_id, JobStatus.FAILED.value)
         await _set_app_state(app_id, "error")
+        if job_type == "update":
+            await _auto_rollback_on_failure(app_id, job_id)
+
+
+async def _auto_rollback_on_failure(app_id: str, failed_job_id: str) -> None:
+    """Find the most recent snapshot for the app and enqueue a rollback job."""
+    try:
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT id FROM app_snapshots WHERE installed_app_id = ? ORDER BY created_at DESC LIMIT 1",
+                (app_id,),
+            ) as cur:
+                row = await cur.fetchone()
+        if not row:
+            return
+        await enqueue_rollback(app_id, dict(row)["id"])
+    except Exception:
+        pass
+
+
+async def _run_rollback(job_id: str, app_id: str, snapshot_id: str) -> bool:
+    """
+    Restore template_version_id and config from a snapshot, then redeploy.
+    This runs the full update pipeline against the restored state.
+    """
+    await _add_step(job_id, "restore_snapshot", "running",
+                    f"Loading snapshot {snapshot_id[:8]}...")
+
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT template_version_id, config, ir_hash FROM app_snapshots WHERE id = ? AND installed_app_id = ?",
+            (snapshot_id, app_id),
+        ) as cur:
+            snap = await cur.fetchone()
+
+    if not snap:
+        raise RuntimeError(f"Snapshot {snapshot_id!r} not found")
+
+    d = dict(snap)
+    version_label = d.get("template_version_id", "unknown")[:8] if d.get("template_version_id") else "previous"
+
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE installed_apps SET template_version_id = ?, config = ?, updated_at = ? WHERE id = ?",
+            (d["template_version_id"], d["config"] or "{}", _now(), app_id),
+        )
+        await db.commit()
+
+    await _add_step(job_id, "restore_snapshot", StepStatus.SUCCESS.value,
+                    f"Restored to {version_label} — redeploying...", finished_at=_now())
+
+    app = await _load_app(app_id)
+    if not app:
+        raise RuntimeError("App not found after snapshot restore")
+
+    return await _run_update(job_id, app_id, app, dry_run=False)
 
 
 def _is_passthrough(app: dict) -> bool:

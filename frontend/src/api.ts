@@ -228,6 +228,44 @@ export interface AppActionRecord {
   created_at?: string;
 }
 
+export interface AppSnapshot {
+  id: string;
+  installed_app_id: string;
+  template_version_id: string | null;
+  config: Record<string, unknown>;
+  ir_hash: string;
+  compose_hash: string;
+  created_at: string;
+  version_label: string | null;
+}
+
+export interface ContainerServicePort {
+  URL: string;
+  TargetPort: number;
+  PublishedPort: number;
+  Protocol: string;
+}
+
+export interface ContainerService {
+  name: string;
+  state: string;
+  status: string;
+  image: string;
+  ports: ContainerServicePort[];
+}
+
+export interface ContainerStatus {
+  services: ContainerService[];
+  available: boolean;
+  error?: string;
+}
+
+export interface ContainerLogs {
+  lines: string[];
+  service: string | null;
+  fetched_at: string;
+}
+
 export const api = {
   templates: {
     list: () => req<AppTemplate[]>("/api/templates"),
@@ -272,6 +310,19 @@ export const api = {
       req<{ ok: boolean }>(`/api/apps/${id}/actions/${action_record_id}`, { method: "DELETE" }),
     runAction: (id: string, action_record_id: string) =>
       req<{ ok: boolean; degraded: boolean }>(`/api/apps/${id}/actions/${action_record_id}/run`, { method: "POST" }),
+    snapshots: (id: string) =>
+      req<AppSnapshot[]>(`/api/apps/${id}/snapshots`),
+    rollback: (id: string, snapshot_id: string) =>
+      req<{ job: Job }>(`/api/apps/${id}/rollback/${snapshot_id}`, { method: "POST" }),
+    containerStatus: (id: string) =>
+      req<ContainerStatus>(`/api/apps/${id}/status`),
+    containerLogs: (id: string, service?: string, lines?: number) => {
+      const params = new URLSearchParams();
+      if (service) params.set("service", service);
+      if (lines) params.set("lines", String(lines));
+      const qs = params.toString();
+      return req<ContainerLogs>(`/api/apps/${id}/logs${qs ? `?${qs}` : ""}`);
+    },
   },
   queue: {
     list: () => req<InstalledApp[]>("/api/queue"),
