@@ -3,7 +3,7 @@ schema_version: 2
 app:
   id: prowlarr
   name: Prowlarr
-  version: "1.0.0"
+  version: "1.0.1"
   flavor: linuxserver
   allow_custom_env: true
   allow_custom_storage: true
@@ -15,7 +15,7 @@ services:
   - id: prowlarr
     image:
       repository: lscr.io/linuxserver/prowlarr
-      tag: 2.3.5.5327-ls145
+      tag: 2.4.0.5397-ls149
 
     networking:
       ports:
