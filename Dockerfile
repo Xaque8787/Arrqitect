@@ -31,15 +31,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Build frontend
-COPY frontend/package*.json ./frontend/
-RUN cd frontend && npm install
-
-COPY frontend/ ./frontend/
-RUN cd frontend && npm run build
-
 # Copy application code
 COPY . .
+
+# Build frontend (overwrites any pre-built dist that came from the repo)
+RUN cd frontend && npm install && npm run build
 
 # Create compose directory
 RUN mkdir -p /compose
