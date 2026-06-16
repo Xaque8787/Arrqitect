@@ -200,6 +200,14 @@ Use `private` for app-specific config directories. Use `rshared` for directories
 |-------|------|----------|-------------|
 | `behavior` | string | yes | `persistent` (unless-stopped), `on-failure`, or `never` (no). |
 
+#### lifecycle.init_process
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `init_process` | bool | no | When `true`, Docker runs an init process (tini) as PID 1 inside the container. Equivalent to `init: true` in Compose. Default `false`. |
+
+Use `init_process: true` for apps whose entrypoint does not handle SIGTERM correctly, or for apps that spawn child processes and need zombie reaping. Most linuxserver images handle this internally and do not require it.
+
 ---
 
 ### 2.4 config_schema block

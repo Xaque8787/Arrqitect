@@ -45,6 +45,7 @@ class EnvVarIR(BaseModel):
 
 class LifecycleIR(BaseModel):
     restart_behavior: Literal["persistent", "on-failure", "never"]
+    init_process: bool = False
 
 
 class NetworkMembershipIR(BaseModel):

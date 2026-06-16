@@ -289,7 +289,10 @@ def resolve_custom_env(custom_entries: list[dict]) -> list[EnvVarIR]:
 
 
 def resolve_lifecycle(service: ServiceModel) -> LifecycleIR:
-    return LifecycleIR(restart_behavior=service.lifecycle.restart.behavior)
+    return LifecycleIR(
+        restart_behavior=service.lifecycle.restart.behavior,
+        init_process=service.lifecycle.init_process,
+    )
 
 
 # --- internal helpers ---

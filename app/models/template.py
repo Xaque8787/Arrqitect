@@ -17,6 +17,7 @@ class RestartModel(BaseModel):
 
 class LifecycleModel(BaseModel):
     restart: RestartModel = RestartModel()
+    init_process: bool = False
 
 
 class StorageModel(BaseModel):

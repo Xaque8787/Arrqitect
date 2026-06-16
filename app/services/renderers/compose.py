@@ -11,6 +11,10 @@ If you find yourself writing Compose concepts anywhere other than this file,
 that is an architecture violation.
 
 Semantic lowering rules:
+  lifecycle.init_process:
+    true   -> init: true
+    false  -> (omitted)
+
   lifecycle.restart_behavior:
     persistent  -> "unless-stopped"
     on-failure  -> "on-failure"
@@ -123,6 +127,9 @@ class ComposeRenderer:
 
         result["extra_hosts"] = ["host.docker.internal:host-gateway"]
         result["restart"] = _RESTART_MAP[svc.lifecycle.restart_behavior]
+
+        if svc.lifecycle.init_process:
+            result["init"] = True
 
         return result
 
