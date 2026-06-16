@@ -22,10 +22,11 @@ Semantic lowering rules:
     none        -> port omitted entirely
 
   storage axes -> bind mount:
-    propagation.mode=none               -> propagation: rprivate
-    propagation.mode=bidirectional      -> propagation: rshared
-    propagation.mode=host-to-container  -> propagation: rslave
-    propagation.mode=container-to-host  -> propagation: slave
+    propagation.mode=none                          -> propagation: rprivate
+    propagation.mode=bidirectional-nonrecursive    -> propagation: shared
+    propagation.mode=bidirectional                 -> propagation: rshared
+    propagation.mode=host-to-container-nonrecursive -> propagation: slave
+    propagation.mode=host-to-container             -> propagation: rslave
     persistence=persistent  -> create_host_path: true
     persistence=ephemeral   -> create_host_path: false
     mutability=read-only    -> read_only: true
@@ -57,9 +58,10 @@ _PROTOCOL_MAP = {
 
 _PROPAGATION_MAP = {
     "none": "rprivate",
+    "bidirectional-nonrecursive": "shared",
     "bidirectional": "rshared",
+    "host-to-container-nonrecursive": "slave",
     "host-to-container": "rslave",
-    "container-to-host": "slave",
 }
 
 

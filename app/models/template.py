@@ -22,7 +22,7 @@ class LifecycleModel(BaseModel):
 class StorageModel(BaseModel):
     id: str
     persistence: Literal["persistent", "ephemeral"]
-    propagation: Literal["private", "shared", "slave", "rslave"] = "private"
+    propagation: Literal["private", "shared", "rshared", "slave", "rslave"] = "private"
     mutability: Literal["read-write", "read-only"]
     durability: Literal["configuration", "user-data", "transient", "model-store"]
     container_path: str

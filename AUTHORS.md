@@ -178,7 +178,7 @@ Only ports with `reachability: external` get a `ports:` entry in the rendered Co
 | `id` | string | yes | Identifier used to bind a config field to this mount. |
 | `container_path` | string | yes | Absolute path inside the container. Must be unique per service. |
 | `persistence` | string | yes | `persistent` (survives removal) or `ephemeral` (destroyed on stop). |
-| `propagation` | string | yes | `private`, `shared`, `slave`, or `rslave`. See table below. |
+| `propagation` | string | yes | `private`, `shared`, `rshared`, `slave`, or `rslave`. See table below. |
 | `mutability` | string | yes | `read-write` or `read-only`. |
 | `durability` | string | yes | Advisory label: `configuration`, `user-data`, or `transient`. Does not affect runtime behavior. |
 
@@ -186,12 +186,13 @@ Only ports with `reachability: external` get a `ports:` entry in the rendered Co
 
 | Template value | Docker bind-mount flag | Meaning |
 |----------------|------------------------|---------|
-| `private` | `rprivate` | No mount propagation in either direction |
-| `shared` | `rshared` | Mounts in both host and container are visible to each other |
-| `slave` | `rslave` | Host mounts visible inside container only |
-| `rslave` | `slave` | Container mounts visible on host only |
+| `private` | `rprivate` | No propagation in either direction (recursive) |
+| `shared` | `shared` | New submounts in either direction are visible to the other side (non-recursive) |
+| `rshared` | `rshared` | Same as `shared`, but recursive |
+| `slave` | `slave` | Host submounts appear inside the container; container submounts do NOT propagate back (non-recursive) |
+| `rslave` | `rslave` | Same as `slave`, but recursive |
 
-Use `shared` for directories that multiple services share (e.g., `/downloads`), and `private` for app-specific config directories.
+Use `private` for app-specific config directories. Use `rshared` for directories shared between multiple containers (e.g., `/downloads`, `/media`). Use `slave`/`rslave` when you need one-way host→container propagation only.
 
 #### lifecycle.restart
 

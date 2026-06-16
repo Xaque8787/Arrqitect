@@ -20,9 +20,10 @@ CONTAINER_COMPOSE_DIR = "/compose"
 # Template layer → IR intent. Docker terms never appear here.
 _PROPAGATION_INTENT = {
     "private": "none",
-    "shared": "bidirectional",
-    "slave": "host-to-container",
-    "rslave": "container-to-host",
+    "shared": "bidirectional-nonrecursive",
+    "rshared": "bidirectional",
+    "slave": "host-to-container-nonrecursive",
+    "rslave": "host-to-container",
 }
 
 GLOBAL_ENV_MAP = {
