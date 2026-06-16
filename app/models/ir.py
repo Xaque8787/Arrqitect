@@ -43,9 +43,19 @@ class EnvVarIR(BaseModel):
     is_custom: bool = False
 
 
+class HealthcheckIR(BaseModel):
+    type: Literal["shell", "exec", "disable"]
+    command: str | list[str] | None = None
+    interval: str = "30s"
+    timeout: str = "30s"
+    retries: int = 3
+    start_period: str = "0s"
+
+
 class LifecycleIR(BaseModel):
     restart_behavior: Literal["persistent", "on-failure", "never"]
     init_process: bool = False
+    healthcheck: HealthcheckIR | None = None
 
 
 class NetworkMembershipIR(BaseModel):

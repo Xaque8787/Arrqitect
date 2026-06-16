@@ -39,13 +39,19 @@ Semantic lowering rules:
   protocol -> compose port protocol:
     http/https/tcp  -> tcp
     udp             -> udp
+
+  healthcheck.type:
+    shell    -> test: ["CMD-SHELL", "<command string>"]
+    exec     -> test: ["CMD", *command_list]
+    disable  -> test: ["NONE"]
+    absent   -> healthcheck block omitted (image default preserved)
 """
 
 from __future__ import annotations
 import hashlib
 from typing import Any
 
-from app.models.ir import AppIR, ServiceIR, StorageMountIR, PortIR, EnvVarIR, LifecycleIR, NetworkIR
+from app.models.ir import AppIR, ServiceIR, StorageMountIR, PortIR, EnvVarIR, LifecycleIR, HealthcheckIR, NetworkIR
 
 _RESTART_MAP = {
     "persistent": "unless-stopped",
@@ -131,6 +137,9 @@ class ComposeRenderer:
         if svc.lifecycle.init_process:
             result["init"] = True
 
+        if svc.lifecycle.healthcheck is not None:
+            result["healthcheck"] = self._emit_healthcheck(svc.lifecycle.healthcheck)
+
         return result
 
     def _emit_volume(self, mount: StorageMountIR) -> dict[str, Any]:
@@ -155,6 +164,22 @@ class ComposeRenderer:
             "published": port.published_port,
             "protocol": _PROTOCOL_MAP[port.protocol],
             "mode": "host",
+        }
+
+    def _emit_healthcheck(self, hc: HealthcheckIR) -> dict[str, Any]:
+        if hc.type == "disable":
+            test_value: list[str] = ["NONE"]
+        elif hc.type == "shell":
+            test_value = ["CMD-SHELL", hc.command]
+        else:  # exec
+            test_value = ["CMD"] + list(hc.command)
+
+        return {
+            "test": test_value,
+            "interval": hc.interval,
+            "timeout": hc.timeout,
+            "retries": hc.retries,
+            "start_period": hc.start_period,
         }
 
     def _emit_env(self, env_vars: list[EnvVarIR]) -> list[str]:

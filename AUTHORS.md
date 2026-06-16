@@ -200,6 +200,7 @@ Use `private` for app-specific config directories. Use `rshared` for directories
 |-------|------|----------|-------------|
 | `behavior` | string | yes | `persistent` (unless-stopped), `on-failure`, or `never` (no). |
 
+
 #### lifecycle.init_process
 
 | Field | Type | Required | Description |
@@ -207,6 +208,89 @@ Use `private` for app-specific config directories. Use `rshared` for directories
 | `init_process` | bool | no | When `true`, Docker runs an init process (tini) as PID 1 inside the container. Equivalent to `init: true` in Compose. Default `false`. |
 
 Use `init_process: true` for apps whose entrypoint does not handle SIGTERM correctly, or for apps that spawn child processes and need zombie reaping. Most linuxserver images handle this internally and do not require it.
+
+#### lifecycle.healthcheck
+
+Declare a container healthcheck. When omitted, any healthcheck baked into the image is preserved unchanged.
+
+```yaml
+lifecycle:
+  healthcheck:
+    test:
+      type: shell
+      command: "wget --no-verbose --tries=1 --spider http://localhost:9696/ping || exit 1"
+    interval: 15s
+    timeout: 3s
+    retries: 3
+    start_period: 20s
+```
+
+**`test` block**:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | yes | `shell`, `exec`, or `disable`. |
+| `command` | string or list | conditional | Required for `shell` (string) and `exec` (list of strings). Must not be set for `disable`. |
+
+**Test type behavior**:
+
+| `type` | `command` | Rendered as |
+|--------|-----------|-------------|
+| `shell` | `"curl -f http://localhost/health"` | `["CMD-SHELL", "curl -f http://localhost/health"]` |
+| `exec` | `["curl", "-f", "http://localhost/health"]` | `["CMD", "curl", "-f", "http://localhost/health"]` |
+| `disable` | (omit) | `["NONE"]` — suppresses any healthcheck defined in the image |
+
+Use `type: shell` when your test is a shell command string (the common case — `curl`, `wget`, etc.).
+Use `type: exec` when you want exec-form without shell interpretation.
+Use `type: disable` to explicitly suppress a healthcheck that is baked into the base image.
+
+**Timing fields** (all optional, default values shown):
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `interval` | `30s` | How often to run the check. |
+| `timeout` | `30s` | How long to wait before the check is considered failed. |
+| `retries` | `3` | Consecutive failures needed to mark the container unhealthy. |
+| `start_period` | `0s` | Grace period after container start before failures count. |
+
+Duration strings use Docker's format: `30s`, `1m30s`, `2m`, etc.
+
+**Shell form example** (most common):
+
+```yaml
+lifecycle:
+  healthcheck:
+    test:
+      type: shell
+      command: "wget --no-verbose --tries=1 --spider http://localhost:5055/api/v1/settings/public || exit 1"
+    start_period: 20s
+    timeout: 3s
+    interval: 15s
+    retries: 3
+```
+
+**Exec form example**:
+
+```yaml
+lifecycle:
+  healthcheck:
+    test:
+      type: exec
+      command: ["curl", "-f", "http://localhost:7878/ping"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 10s
+```
+
+**Disable example** (suppress image-baked healthcheck):
+
+```yaml
+lifecycle:
+  healthcheck:
+    test:
+      type: disable
+```
 
 ---
 

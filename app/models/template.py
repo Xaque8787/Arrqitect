@@ -15,9 +15,36 @@ class RestartModel(BaseModel):
     behavior: Literal["persistent", "on-failure", "never"] = "persistent"
 
 
+class HealthcheckTestModel(BaseModel):
+    type: Literal["shell", "exec", "disable"]
+    command: str | list[str] | None = None
+
+    @model_validator(mode="after")
+    def validate_command_for_type(self) -> "HealthcheckTestModel":
+        if self.type == "disable":
+            if self.command is not None:
+                raise ValueError("'command' must not be set when type is 'disable'")
+        elif self.type == "shell":
+            if not isinstance(self.command, str):
+                raise ValueError("'command' must be a string when type is 'shell'")
+        elif self.type == "exec":
+            if not isinstance(self.command, list) or not self.command:
+                raise ValueError("'command' must be a non-empty list when type is 'exec'")
+        return self
+
+
+class HealthcheckModel(BaseModel):
+    test: HealthcheckTestModel
+    interval: str = "30s"
+    timeout: str = "30s"
+    retries: int = 3
+    start_period: str = "0s"
+
+
 class LifecycleModel(BaseModel):
     restart: RestartModel = RestartModel()
     init_process: bool = False
+    healthcheck: HealthcheckModel | None = None
 
 
 class StorageModel(BaseModel):

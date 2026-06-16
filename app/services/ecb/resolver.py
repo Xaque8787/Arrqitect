@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 from app.models.template import TemplateModel, ServiceModel, StorageModel, ConfigField
-from app.models.ir import StorageMountIR, MountPropagationIR, PortIR, EnvVarIR, LifecycleIR
+from app.models.ir import StorageMountIR, MountPropagationIR, PortIR, EnvVarIR, LifecycleIR, HealthcheckIR
 
 CONTAINER_COMPOSE_DIR = "/compose"
 
@@ -289,9 +289,21 @@ def resolve_custom_env(custom_entries: list[dict]) -> list[EnvVarIR]:
 
 
 def resolve_lifecycle(service: ServiceModel) -> LifecycleIR:
+    healthcheck: HealthcheckIR | None = None
+    if service.lifecycle.healthcheck is not None:
+        hc = service.lifecycle.healthcheck
+        healthcheck = HealthcheckIR(
+            type=hc.test.type,
+            command=hc.test.command,
+            interval=hc.interval,
+            timeout=hc.timeout,
+            retries=hc.retries,
+            start_period=hc.start_period,
+        )
     return LifecycleIR(
         restart_behavior=service.lifecycle.restart.behavior,
         init_process=service.lifecycle.init_process,
+        healthcheck=healthcheck,
     )
 
 
