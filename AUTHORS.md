@@ -12,6 +12,7 @@ This guide covers everything you need to write app templates for Arrqitect. It a
    - [app block](#22-app-block)
    - [services block](#23-services-block)
    - [config_schema block](#24-config_schema-block)
+   - [Hook-only config fields](#hook-only-config-fields)
    - [provides block](#25-provides-block)
    - [consumes block](#26-consumes-block)
    - [hooks block](#27-hooks-block)
@@ -350,7 +351,7 @@ config_schema:
 | `label` | string | yes | Human-readable label shown in the UI. |
 | `type` | string | yes | Data type. See types table below. |
 | `default` | any | no | Default value pre-filled in the wizard. |
-| `binds_to` | string | yes | Dot-path of the service attribute this field controls. |
+| `binds_to` | string | **no** | Dot-path of the service attribute this field controls. Omit for hook-only fields. See [Hook-only config fields](#hook-only-config-fields) below. |
 | `required` | bool | yes | Whether the field must have a non-empty value before install. |
 | `visibility` | string | yes | `visible`, `advanced`, or `hidden`. |
 | `source` | string | yes | `user`, `platform`, or `derived`. |
@@ -358,6 +359,101 @@ config_schema:
 | `ui_widget` | string | no | `input` or `select`. Only relevant when `allowed_values` is set. |
 | `editable` | bool | no | If `false`, the field is read-only in the edit wizard. Default `true`. |
 | `requires` | list | no | Cross-app preconditions for this field. See below. |
+
+---
+
+#### Hook-only config fields
+
+A config field with no `binds_to` (or `binds_to: null`) does not influence the Docker Compose output at all. Its sole purpose is to collect a value from the user at install time and make it available inside hook steps via the `inputs.<field_id>` context namespace.
+
+This is the correct pattern for any value that drives post-install automation — things like admin credentials, initial library paths, feature toggles, or mode selections — where the value is consumed by hook HTTP calls, `registry_write` steps, or `file_read`/`file_write` operations rather than by a container environment variable or volume mount.
+
+**When to use a hook-only field**:
+- You need to call an app's HTTP API after startup with a user-supplied value (e.g., create an admin account, set an initial password, add a library path).
+- You need to write a value into a config file after the container generates it.
+- You want to gate post-install behavior on a user choice without that choice affecting the container definition.
+
+**All field types and widgets are supported**, including:
+
+| Type | ui_widget | Effect |
+|------|-----------|--------|
+| `string` | `input` | Free-text input — passwords, usernames, API tokens, paths |
+| `string` | `select` | Dropdown — enumerated string choices (e.g., a language or region) |
+| `boolean` | `input` | Rendered as a toggle/checkbox in the UI |
+| `number` | `input` | Numeric input — timeouts, limits, counts |
+| `port` | `input` | Port number — useful if the app's own API needs the port passed in a request body |
+
+Use `allowed_values` together with `ui_widget: select` to constrain the user to a defined list of options:
+
+```yaml
+config_schema:
+  - id: transcoding_mode
+    label: Hardware Transcoding
+    type: string
+    ui_widget: select
+    allowed_values:
+      - none
+      - vaapi
+      - nvenc
+      - qsv
+    default: none
+    required: false
+    visibility: visible
+    source: user
+    # no binds_to — value is used only in post_install hook steps
+```
+
+Inside hooks, reference the value as `<<inputs.transcoding_mode>>` in any template expression.
+
+**Example — collecting admin credentials for first-run API setup**:
+
+```yaml
+config_schema:
+  - id: web_ui_port
+    label: Web UI Port
+    type: port
+    default: 8096
+    binds_to: services.jellyfin.ports.web_ui.published_port
+    required: false
+    visibility: visible
+    source: user
+
+  - id: admin_username
+    label: Admin Username
+    type: string
+    default: admin
+    required: true
+    visibility: visible
+    source: user
+    # no binds_to — passed to the setup API in post_install
+
+  - id: admin_password
+    label: Admin Password
+    type: string
+    default: ""
+    required: true
+    visibility: visible
+    source: user
+    # no binds_to — passed to the setup API in post_install
+```
+
+The corresponding hook can then do:
+
+```yaml
+steps:
+  - id: complete_setup
+    type: http_request
+    method: POST
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Startup/User"
+    headers:
+      Content-Type: application/json
+    body_template: >-
+      {"Name": "<<inputs.admin_username>>", "Password": "<<inputs.admin_password>>"}
+```
+
+Hook-only fields are stored alongside all other config values in the installed app's config JSON. They are available for the lifetime of the installation and are re-available if the hook is re-run (e.g., during a manual reconcile). Treat sensitive hook-only fields (passwords, tokens) the same as you would any credential — do not log them in step messages, and consider marking them `visibility: advanced` if they are not commonly changed.
+
+---
 
 #### Field types
 

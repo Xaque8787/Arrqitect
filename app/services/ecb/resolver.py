@@ -194,7 +194,7 @@ def resolve_env_vars(
 
     # User config vars — only fields whose binds_to targets an env var dotpath
     for field in config_schema:
-        if not field.binds_to.startswith(env_prefix):
+        if not field.binds_to or not field.binds_to.startswith(env_prefix):
             continue
         env_name = field.binds_to[len(env_prefix):]
         if not env_name:

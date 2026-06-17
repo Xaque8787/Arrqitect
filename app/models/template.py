@@ -128,7 +128,7 @@ class ConfigField(BaseModel):
     type: Literal["port", "storage_path", "string", "number", "boolean"]
     default: str | int | bool | None = None
     placeholder: str | None = None
-    binds_to: str
+    binds_to: str | None = None
     required: bool = False
     visibility: Literal["visible", "advanced", "hidden"] = "visible"
     source: Literal["user", "platform", "derived"] = "user"
