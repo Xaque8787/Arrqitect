@@ -119,7 +119,7 @@ async def validate_queue() -> QueueValidationResult:
         if installed_ids:
             placeholders = ",".join("?" * len(installed_ids))
             async with db.execute(
-                f"SELECT app_id, action_id FROM app_actions WHERE app_id IN ({placeholders})",
+                f"SELECT app_id, action_id, variant_id FROM app_actions WHERE app_id IN ({placeholders})",
                 installed_ids,
             ) as cur:
                 for row in await cur.fetchall():
@@ -353,7 +353,10 @@ def _check_requires(
         else:
             target_action_list = installed_actions.get(target_app_id, [])
 
-        has_action = any(r.get("action_id") == req_action for r in target_action_list)
+        has_action = any(
+            r.get("action_id") == req_action or r.get("variant_id") == req_action
+            for r in target_action_list
+        )
         if not has_action:
             message = custom_message or (
                 f'{consumer_app["name"]} {context} requires {target_slug} '
