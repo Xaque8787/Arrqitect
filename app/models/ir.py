@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 
 class MountPropagationIR(BaseModel):
-    mode: Literal["none", "bidirectional", "host-to-container", "container-to-host"] = "none"
+    mode: Literal["none", "bidirectional-nonrecursive", "bidirectional", "host-to-container-nonrecursive", "host-to-container", "container-to-host"] = "none"
 
 
 class StorageMountIR(BaseModel):

@@ -35,7 +35,6 @@ services:
     lifecycle:
       restart:
         behavior: persistent
-      init_process: true
       healthcheck:
         test:
           type: shell

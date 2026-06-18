@@ -305,46 +305,43 @@ def _upsert_app_template(
     compose_template: str, config_schema: str, hook_definitions: str, provides: str,
     allow_custom_env: bool = False, allow_custom_storage: bool = False,
 ) -> str:
-    existing = conn.execute(
-        "SELECT id FROM app_templates WHERE slug = ?", (slug,)
-    ).fetchone()
-
-    if existing:
-        template_id = existing[0]
-        conn.execute("""
-            UPDATE app_templates SET
-                name                 = ?,
-                description          = ?,
-                icon_url             = ?,
-                source_url           = ?,
-                compose_template     = ?,
-                config_schema        = ?,
-                hook_definitions     = ?,
-                provides             = ?,
-                allow_custom_env     = ?,
-                allow_custom_storage = ?,
-                updated_at           = ?
-            WHERE id = ?
-        """, (
-            name, description, icon_url, source_url,
-            compose_template, config_schema, hook_definitions, provides,
-            int(allow_custom_env), int(allow_custom_storage),
-            _now(), template_id,
-        ))
-    else:
-        template_id = secrets.token_hex(16)
-        conn.execute("""
-            INSERT INTO app_templates
-                (id, slug, name, description, icon_url, source_url,
-                 compose_template, config_schema, hook_definitions, provides,
-                 allow_custom_env, allow_custom_storage)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            template_id, slug, name, description, icon_url, source_url,
-            compose_template, config_schema, hook_definitions, provides,
-            int(allow_custom_env), int(allow_custom_storage),
-        ))
-
+    # INSERT OR IGNORE avoids a UNIQUE constraint race when two workers seed concurrently.
+    # The UPDATE that follows ensures the row is always current regardless of which
+    # worker won the INSERT.
+    new_id = secrets.token_hex(16)
+    conn.execute("""
+        INSERT OR IGNORE INTO app_templates
+            (id, slug, name, description, icon_url, source_url,
+             compose_template, config_schema, hook_definitions, provides,
+             allow_custom_env, allow_custom_storage)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        new_id, slug, name, description, icon_url, source_url,
+        compose_template, config_schema, hook_definitions, provides,
+        int(allow_custom_env), int(allow_custom_storage),
+    ))
+    row = conn.execute("SELECT id FROM app_templates WHERE slug = ?", (slug,)).fetchone()
+    template_id = row[0]
+    conn.execute("""
+        UPDATE app_templates SET
+            name                 = ?,
+            description          = ?,
+            icon_url             = ?,
+            source_url           = ?,
+            compose_template     = ?,
+            config_schema        = ?,
+            hook_definitions     = ?,
+            provides             = ?,
+            allow_custom_env     = ?,
+            allow_custom_storage = ?,
+            updated_at           = ?
+        WHERE id = ?
+    """, (
+        name, description, icon_url, source_url,
+        compose_template, config_schema, hook_definitions, provides,
+        int(allow_custom_env), int(allow_custom_storage),
+        _now(), template_id,
+    ))
     return template_id
 
 
