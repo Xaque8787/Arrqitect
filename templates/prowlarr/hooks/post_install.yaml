@@ -74,6 +74,40 @@ steps:
       Used by the hook executor (which runs on the host, not inside Docker)
       when it needs to make direct HTTP calls to Prowlarr's API.
 
+  - id: get_host_config
+    type: http_request
+    when: "inputs.auth_type != 'none'"
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/api/v1/config/host"
+    method: GET
+    headers:
+      X-Api-Key: "<<registry.prowlarr_real_api_key>>"
+    bind_response_json:
+      bind_as: current_bind_address
+      path: bindAddress
+    on_error: fail
+    timeout_seconds: 60
+    depends_on:
+      - publish_api_key
+    description: >
+      Fetch the live host config to capture the current bindAddress value
+      and confirm the Prowlarr web API is ready before attempting a PUT.
+
+  - id: get_ssl_port
+    type: http_request
+    when: "inputs.auth_type != 'none'"
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/api/v1/config/host"
+    method: GET
+    headers:
+      X-Api-Key: "<<registry.prowlarr_real_api_key>>"
+    bind_response_json:
+      bind_as: current_ssl_port
+      path: sslPort
+    on_error: fail
+    timeout_seconds: 30
+    depends_on:
+      - get_host_config
+    description: Fetch the current sslPort so the PUT round-trips it unchanged.
+
   - id: configure_auth
     type: http_request
     when: "inputs.auth_type != 'none'"
@@ -83,11 +117,11 @@ steps:
       Content-Type: application/json
       X-Api-Key: "<<registry.prowlarr_real_api_key>>"
     body_template: >-
-      {"id":1,"bindAddress":"*","port":<<inputs.web_ui_port>>,"sslPort":9898,"enableSsl":false,"launchBrowser":false,"authenticationMethod":"<<inputs.auth_type>>","authenticationRequired":"disabledForLocalAddresses","username":"<<inputs.auth_username>>","password":"<<inputs.auth_password>>","passwordConfirmation":"<<inputs.auth_password>>","apiKey":"<<registry.prowlarr_real_api_key>>","logLevel":"info","logSizeLimit":1,"analyticsEnabled":false,"branch":"master","updateAutomatically":false,"updateMechanism":"docker","instanceName":"Prowlarr","applicationUrl":"","urlBase":"","proxyEnabled":false,"proxyType":"http","proxyHostname":"","proxyPort":8080,"proxyUsername":"","proxyPassword":"","proxyBypassFilter":"","proxyBypassLocalAddresses":true,"certificateValidation":"enabled","backupFolder":"Backups","backupInterval":7,"backupRetention":28,"historyCleanupDays":30,"consoleLogLevel":"","sslCertPath":"","sslCertPassword":"","trustCgnatIpAddresses":false,"updateScriptPath":""}
+      {"id":1,"bindAddress":"<<registry.current_bind_address>>","port":<<inputs.web_ui_port>>,"sslPort":<<registry.current_ssl_port>>,"enableSsl":false,"launchBrowser":false,"authenticationMethod":"<<inputs.auth_type>>","authenticationRequired":"disabledForLocalAddresses","username":"<<inputs.auth_username>>","password":"<<inputs.auth_password>>","passwordConfirmation":"<<inputs.auth_password>>","apiKey":"<<registry.prowlarr_real_api_key>>","logLevel":"info","logSizeLimit":1,"analyticsEnabled":false,"branch":"master","updateAutomatically":false,"updateMechanism":"docker","instanceName":"Prowlarr","applicationUrl":"","urlBase":"","proxyEnabled":false,"proxyType":"http","proxyHostname":"","proxyPort":8080,"proxyUsername":"","proxyPassword":"","proxyBypassFilter":"","proxyBypassLocalAddresses":true,"certificateValidation":"enabled","backupFolder":"Backups","backupInterval":7,"backupRetention":28,"historyCleanupDays":30,"consoleLogLevel":"","sslCertPath":"","sslCertPassword":"","trustCgnatIpAddresses":false,"updateScriptPath":""}
     on_error: continue
     timeout_seconds: 30
     depends_on:
-      - publish_api_key
+      - get_ssl_port
     description: >
       Configure Prowlarr authentication using the credentials supplied at
       install time. Skipped when auth type is None. Uses on_error: continue
