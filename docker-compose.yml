@@ -6,7 +6,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - .:/app
+      - ./templates:/app/templates
       - ./compose:/compose
       - ${DATA_DIR:-./data}:/data
       - /var/run/docker.sock:/var/run/docker.sock
