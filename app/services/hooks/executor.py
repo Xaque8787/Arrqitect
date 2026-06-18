@@ -10,7 +10,7 @@ Hook definition schema (YAML):
     steps:
       - id: <string>              # unique within this hook
         type: registry_read | registry_write | http_request | compose_command | log
-             | wait_for_file | file_read
+             | wait_for_file | wait_for_http | file_read | file_write
         when: "<namespace>.<field> (==|!=) '<literal>'"  # optional
         depends_on: [<step_id>, ...]                     # optional
         on_error: fail | continue                        # optional, default: fail
@@ -46,11 +46,24 @@ Hook definition schema (YAML):
         poll_interval_seconds: <int>       # default 5
         timeout_seconds: <int>             # default 120 (overrides step-level timeout)
 
+    wait_for_http:
+        url_template: "<string>"           # URL to poll until 2xx; supports <<context>> substitution
+        method: GET | POST | ...           # optional, default GET
+        headers: {key: value}              # optional
+        poll_interval_seconds: <int>       # default 5
+        timeout_seconds: <int>             # total wall-clock timeout (overrides step-level)
+
     file_read:
-        path_template: "<string>"          # supports {app.install_dir} etc.
+        path_template: "<string>"          # supports <<app.install_dir>> etc.
         regex: "<pattern>"                 # optional — extract a value
         group: <int>                       # capture group index, default 1
         bind_as: <context_variable_name>   # required; stored as registry.<bind_as>
+
+    file_write:
+        path_template: "<string>"          # destination path; supports <<context>> substitution
+        content_template: "<string>"       # file content; supports <<context>> substitution
+        mode: overwrite | append           # default overwrite
+        create_dirs: true | false          # create parent directories if missing, default true
 
 Context available during execution:
     registry.<varname>: <value>            # from registry_read, file_read, bind_response_json
@@ -311,8 +324,12 @@ async def _execute_step(
             return await _step_compose_command(step, exec_context, ctx, timeout)
         elif step.step_type == "wait_for_file":
             return await _step_wait_for_file(step, exec_context, ctx, timeout)
+        elif step.step_type == "wait_for_http":
+            return await _step_wait_for_http(step, exec_context, ctx, timeout)
         elif step.step_type == "file_read":
             return await _step_file_read(step, exec_context, ctx, timeout)
+        elif step.step_type == "file_write":
+            return await _step_file_write(step, exec_context, ctx, timeout)
         elif step.step_type == "log":
             return await _step_log(step, exec_context)
         else:
@@ -586,6 +603,81 @@ async def _step_file_read(
     side_effects = {f"registry.{bind_as}": value}
     display = "***" if "key" in bind_as.lower() or "password" in bind_as.lower() else value[:80]
     return StepStatus.SUCCESS, f"file_read: {target_path} → {bind_as!r} = {display!r}", side_effects
+
+
+async def _step_wait_for_http(
+    # Polls url_template until a 2xx response is received.
+    step: _StepDef, exec_context: dict, ctx: HookContext, timeout: int
+) -> tuple[StepStatus, str, dict]:
+    url_template = step.params.get("url_template", "")
+    method = step.params.get("method", "GET").upper()
+    headers = step.params.get("headers", {})
+    poll_interval = int(step.params.get("poll_interval_seconds", 5))
+    wait_timeout = int(step.params.get("timeout_seconds", timeout))
+
+    if not url_template:
+        return StepStatus.FAILED, "wait_for_http: missing 'url_template'", {}
+
+    url = _render_template(url_template, exec_context)
+    if not url:
+        return StepStatus.FAILED, "wait_for_http: url_template resolved to empty string", {}
+
+    rendered_headers = {k: _render_template(str(v), exec_context) for k, v in headers.items()}
+
+    elapsed = 0
+    last_error = ""
+    while elapsed < wait_timeout:
+        try:
+            async with httpx.AsyncClient(timeout=min(poll_interval, 10)) as client:
+                resp = await client.request(method, url, headers=rendered_headers)
+            if resp.is_success:
+                return StepStatus.SUCCESS, f"wait_for_http: {url} ready after {elapsed}s ({resp.status_code})", {}
+            last_error = f"status {resp.status_code}"
+        except Exception as exc:
+            last_error = str(exc)
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+
+    msg = f"wait_for_http: {url} not ready after {wait_timeout}s — last error: {last_error}"
+    if step.on_error == "continue":
+        return StepStatus.CONTINUE_SUCCESS, f"{msg} (on_error: continue)", {}
+    return StepStatus.TIMEOUT, msg, {}
+
+
+async def _step_file_write(
+    # Writes rendered content to a path on the host filesystem.
+    step: _StepDef, exec_context: dict, ctx: HookContext, timeout: int
+) -> tuple[StepStatus, str, dict]:
+    path_template = step.params.get("path_template", "")
+    content_template = step.params.get("content_template", "")
+    mode = step.params.get("mode", "overwrite")
+    create_dirs = bool(step.params.get("create_dirs", True))
+
+    if not path_template:
+        return StepStatus.FAILED, "file_write: missing 'path_template'", {}
+
+    target_path = _render_template(path_template, exec_context)
+    if not target_path:
+        return StepStatus.FAILED, "file_write: path_template resolved to empty string", {}
+
+    content = _render_template(content_template, exec_context)
+
+    try:
+        p = Path(target_path)
+        if create_dirs:
+            p.parent.mkdir(parents=True, exist_ok=True)
+        if mode == "append":
+            with p.open("a") as f:
+                f.write(content)
+            action = "appended"
+        else:
+            p.write_text(content)
+            action = "wrote"
+        return StepStatus.SUCCESS, f"file_write: {action} {len(content)} bytes to {target_path}", {}
+    except OSError as exc:
+        if step.on_error == "continue":
+            return StepStatus.CONTINUE_SUCCESS, f"file_write: could not write {target_path} (on_error: continue): {exc}", {}
+        return StepStatus.FAILED, f"file_write: could not write {target_path}: {exc}", {}
 
 
 async def _step_log(

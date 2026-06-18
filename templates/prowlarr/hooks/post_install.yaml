@@ -74,6 +74,22 @@ steps:
       Used by the hook executor (which runs on the host, not inside Docker)
       when it needs to make direct HTTP calls to Prowlarr's API.
 
+  - id: wait_for_api
+    type: wait_for_http
+    when: "inputs.auth_type != 'none'"
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/api/v1/system/status"
+    headers:
+      X-Api-Key: "<<registry.prowlarr_real_api_key>>"
+    poll_interval_seconds: 5
+    timeout_seconds: 120
+    on_error: continue
+    depends_on:
+      - publish_api_key
+    description: >
+      Poll Prowlarr's status endpoint until its HTTP API is fully ready.
+      config.xml appearing only means the config was initialised — the
+      web server may still be starting. Skipped when auth type is None.
+
   - id: configure_auth
     type: http_request
     when: "inputs.auth_type != 'none'"
@@ -87,12 +103,10 @@ steps:
     on_error: continue
     timeout_seconds: 30
     depends_on:
-      - publish_api_key
+      - wait_for_api
     description: >
       Configure Prowlarr authentication using the credentials supplied at
-      install time. Skipped when auth type is None. bindAddress and sslPort
-      use Prowlarr's defaults (*  / 6969) — the *arr API field names are
-      PascalCase in responses, making reliable round-trip extraction fragile.
+      install time. Skipped when auth type is None.
 
   - id: log_complete
     type: log
