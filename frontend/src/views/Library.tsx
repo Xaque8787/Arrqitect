@@ -35,7 +35,16 @@ function ConfigFieldInput({ field, value, onChange, appSlug, composeBase }: { fi
   return (
     <div className="form-group">
       <label className="form-label">{field.label}</label>
-      <input className="form-input" type={field.type === "number" || field.type === "port" ? "number" : "text"} value={value} onChange={e => onChange(e.target.value)} required={field.required} placeholder={fieldPlaceholder(field)} disabled={field.editable === false} />
+      <input
+        className="form-input"
+        type={field.sensitive ? "password" : field.type === "number" || field.type === "port" ? "number" : "text"}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        required={field.required}
+        placeholder={fieldPlaceholder(field)}
+        disabled={field.editable === false}
+        autoComplete={field.sensitive ? "new-password" : undefined}
+      />
     </div>
   );
 }

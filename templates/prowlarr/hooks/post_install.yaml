@@ -4,6 +4,9 @@ description: >
   API key, then publishes it and the internal URL to the registry.
   When the real key is published (capability_version bump), the
   reconciler automatically re-runs Radarr/Sonarr registration hooks.
+  If an auth type other than None was selected at install time, also
+  configures Prowlarr authentication so the first-launch auth modal
+  is pre-populated.
 
 steps:
   - id: wait_for_config
@@ -70,6 +73,26 @@ steps:
       Publish Prowlarr's host-accessible URL using the published port.
       Used by the hook executor (which runs on the host, not inside Docker)
       when it needs to make direct HTTP calls to Prowlarr's API.
+
+  - id: configure_auth
+    type: http_request
+    when: "inputs.auth_type != 'None'"
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/api/v1/config/host"
+    method: PUT
+    headers:
+      Content-Type: application/json
+      X-Api-Key: "<<registry.prowlarr_real_api_key>>"
+    body_template: >-
+      {"authenticationMethod":"<<inputs.auth_type>>","authenticationRequired":"Enabled","username":"<<inputs.auth_username>>","password":"<<inputs.auth_password>>","id":1}
+    on_error: continue
+    timeout_seconds: 30
+    depends_on:
+      - publish_api_key
+    description: >
+      Configure Prowlarr authentication using the credentials supplied at
+      install time. Skipped when auth type is None. Uses on_error: continue
+      so a failed call degrades rather than fails the install — verify the
+      endpoint response in the job log and re-run if needed.
 
   - id: log_complete
     type: log

@@ -35,6 +35,15 @@ services:
     lifecycle:
       restart:
         behavior: persistent
+      init_process: true
+      healthcheck:
+        test:
+          type: shell
+          command: "curl -sf http://localhost:9696/ping || exit 1"
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 60s
 
 provides:
   - key: prowlarr.url_internal
@@ -81,6 +90,41 @@ config_schema:
     required: false
     visibility: hidden
     source: platform
+
+  - id: auth_type
+    label: Authentication Type
+    type: string
+    default: "None"
+    binds_to: null
+    required: false
+    visibility: visible
+    source: user
+    ui_widget: select
+    allowed_values:
+      - None
+      - Forms
+      - Basic
+
+  - id: auth_username
+    label: Admin Username
+    type: string
+    default: ""
+    binds_to: null
+    required: false
+    visibility: visible
+    source: user
+    placeholder: "Leave blank if auth type is None"
+
+  - id: auth_password
+    label: Admin Password
+    type: string
+    default: ""
+    binds_to: null
+    required: false
+    visibility: visible
+    source: user
+    sensitive: true
+    placeholder: "Leave blank if auth type is None"
 
 hooks:
   post_install: hooks/post_install.yaml

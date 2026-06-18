@@ -135,6 +135,7 @@ class ConfigField(BaseModel):
     allowed_values: list[str] | None = None
     ui_widget: Literal["input", "select"] = "input"
     editable: bool = True
+    sensitive: bool = False
     requires: list[ConfigRequires] = []
 
 

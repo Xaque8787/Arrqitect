@@ -25,6 +25,7 @@ export interface ConfigField {
   allowed_values?: string[] | null;
   ui_widget?: "input" | "select";
   editable?: boolean;
+  sensitive?: boolean;
   requires?: ConfigRequires[];
 }
 

@@ -17,6 +17,7 @@ actions:
         label: YTS
         description: HD movies, compact file sizes
         idempotency_value: yts
+        enabled_by_default: true
         body_template: >-
           {"name":"<<field.name>>","enable":<<field.enable>>,"priority":<<field.priority>>,"appProfileId":1,"protocol":"torrent","privacy":"public","tags":[],"definitionName":"yts","implementationName":"Cardigann","implementation":"Cardigann","configContract":"CardigannSettings","fields":[{"name":"definitionFile","value":"yts"},{"name":"baseUrl","value":"<<field.baseUrl>>"},{"name":"torrentBaseSettings.preferMagnetUrl","value":<<field.preferMagnetUrl>>},{"name":"torrentBaseSettings.seedRatio"},{"name":"apiurl","value":"movies-api.accel.li"}]}
         fields:
