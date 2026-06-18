@@ -83,7 +83,7 @@ steps:
       Content-Type: application/json
       X-Api-Key: "<<registry.prowlarr_real_api_key>>"
     body_template: >-
-      {"authenticationMethod":"<<inputs.auth_type>>","authenticationRequired":"disabledForLocalAddresses","username":"<<inputs.auth_username>>","password":"<<inputs.auth_password>>","passwordConfirmation":"<<inputs.auth_password>>","id":1}
+      {"id":1,"bindAddress":"*","port":<<inputs.web_ui_port>>,"sslPort":9898,"enableSsl":false,"launchBrowser":false,"authenticationMethod":"<<inputs.auth_type>>","authenticationRequired":"disabledForLocalAddresses","username":"<<inputs.auth_username>>","password":"<<inputs.auth_password>>","passwordConfirmation":"<<inputs.auth_password>>","apiKey":"<<registry.prowlarr_real_api_key>>","logLevel":"info","logSizeLimit":1,"analyticsEnabled":false,"branch":"master","updateAutomatically":false,"updateMechanism":"docker","instanceName":"Prowlarr","applicationUrl":"","urlBase":"","proxyEnabled":false,"proxyType":"http","proxyHostname":"","proxyPort":8080,"proxyUsername":"","proxyPassword":"","proxyBypassFilter":"","proxyBypassLocalAddresses":true,"certificateValidation":"enabled","backupFolder":"Backups","backupInterval":7,"backupRetention":28,"historyCleanupDays":30,"consoleLogLevel":"","sslCertPath":"","sslCertPassword":"","trustCgnatIpAddresses":false,"updateScriptPath":""}
     on_error: continue
     timeout_seconds: 30
     depends_on:
