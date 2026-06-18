@@ -615,6 +615,70 @@ steps:
 
 ### 3.1 Step types
 
+#### `wait_for_http`
+
+Poll an HTTP endpoint until it returns a 2xx response, then proceed.
+
+```yaml
+- id: wait_for_api
+  type: wait_for_http
+  depends_on: [publish_api_key]
+  when: "inputs.auth_type != 'none'"
+  on_error: continue
+  params:
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/api/v1/system/status"
+    headers:
+      X-Api-Key: "<<registry.my_api_key>>"
+    poll_interval_seconds: 5
+    timeout_seconds: 120
+```
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `url_template` | yes | URL to poll. Supports template expressions. |
+| `method` | no | HTTP method. Default `GET`. |
+| `headers` | no | Key-value map of headers. Values support template expressions. |
+| `poll_interval_seconds` | no | How often to retry. Default 5. |
+| `timeout_seconds` | no | Maximum total wait time. Default uses the step-level timeout. Overrides it when set. |
+
+The step succeeds as soon as the URL returns a 2xx status. If the timeout elapses, the step status is TIMEOUT. Use `on_error: continue` if the hook should proceed regardless.
+
+**When to use this over `wait_for_file`**: Use `wait_for_file` to wait for an app to finish initializing its config on disk. Use `wait_for_http` to wait for the app's HTTP API to become ready — these are not the same event. An app can write its config file and still be several seconds away from accepting API requests.
+
+---
+
+#### `file_write`
+
+Write content to a file on the host filesystem.
+
+```yaml
+- id: write_seed_config
+  type: file_write
+  depends_on: [read_api_key]
+  params:
+    path_template: "<<app.install_dir>>/config/seed.json"
+    content_template: >-
+      {"apiKey":"<<registry.my_real_api_key>>","baseUrl":"<<inputs.base_url>>"}
+    mode: overwrite
+    create_dirs: true
+```
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `path_template` | yes | Destination path. Supports template expressions. |
+| `content_template` | yes | File content to write. Supports template expressions. |
+| `mode` | no | `overwrite` (default) — replaces the file. `append` — appends to an existing file. |
+| `create_dirs` | no | Create parent directories if they do not exist. Default `true`. |
+
+Use `on_error: continue` when a write failure should not block the rest of the hook (e.g., writing an optional seed file).
+
+**Common use cases**:
+- Writing a seed configuration that the app reads on first startup.
+- Injecting a rendered config file that the app's image does not generate automatically.
+- Appending to an existing log or state file during post-install setup.
+
+---
+
 #### `registry_read`
 
 Read a value from the capability registry and bind it to the step context.
