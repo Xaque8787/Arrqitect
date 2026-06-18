@@ -93,16 +93,16 @@ config_schema:
   - id: auth_type
     label: Authentication Type
     type: string
-    default: "None"
+    default: "none"
     binds_to: null
     required: false
     visibility: visible
     source: user
     ui_widget: select
     allowed_values:
-      - None
-      - Forms
-      - Basic
+      - none
+      - forms
+      - basic
 
   - id: auth_username
     label: Admin Username
