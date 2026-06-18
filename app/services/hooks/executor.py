@@ -463,10 +463,10 @@ async def _step_http_request(
         if step.on_error == "continue":
             return StepStatus.CONTINUE_SUCCESS, (
                 f"http_request: {method} {url} → {resp.status_code} "
-                f"(on_error: continue) body: {resp.text[:200]}"
+                f"(on_error: continue) body: {resp.text[:1000]}"
             ), {}
         return StepStatus.FAILED, (
-            f"http_request: {method} {url} → {resp.status_code}: {resp.text[:200]}"
+            f"http_request: {method} {url} → {resp.status_code}: {resp.text[:1000]}"
         ), {}
     except Exception as exc:
         if step.on_error == "continue":

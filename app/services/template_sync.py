@@ -190,12 +190,16 @@ def _ingest_v2(raw_text: str, raw: dict, source_url: str, conn, actions_text: st
                 "UPDATE app_templates SET latest_version = ? WHERE id = ?",
                 (version, template_id),
             )
-            # Update actions_definitions even when content unchanged (actions.yaml can evolve independently)
+            # config_schema and hook_definitions are not part of the content hash
+            # but can evolve independently (e.g. sensitive flag, labels, hooks).
+            # Always keep template_versions in sync with the current disk state.
+            update_fields: list = [config_schema_json, hooks_json]
+            update_sql = "UPDATE template_versions SET config_schema = ?, hook_definitions = ?"
             if actions_text:
-                conn.execute(
-                    "UPDATE template_versions SET actions_definitions = ? WHERE id = ?",
-                    (actions_text, existing_ver[0]),
-                )
+                update_fields.append(actions_text)
+                update_sql += ", actions_definitions = ?"
+            update_fields.append(existing_ver[0])
+            conn.execute(update_sql + " WHERE id = ?", update_fields)
             return {"slug": slug, "version": version, "status": "unchanged"}
         raise ImmutabilityViolation(
             f"{slug}@{version} already published with a different content hash. "
