@@ -15,13 +15,18 @@ services:
   - id: jellyfin
     image:
       repository: lscr.io/linuxserver/jellyfin
-      tag: latest
+      tag: 10.11.11ubu2404-ls38
 
     networking:
       ports:
         - id: web_ui
           listen_port: 8096
           protocol: http
+          reachability: external
+
+        - id: discovery
+          listen_port: 7359
+          protocol: udp
           reachability: external
 
     storage:
@@ -32,12 +37,19 @@ services:
         durability: configuration
         container_path: /config
 
-      - id: media
+      - id: tv
         persistence: persistent
         sharing: shared
         mutability: read-only
         durability: data
-        container_path: /media
+        container_path: /data/tvshows
+
+      - id: movies
+        persistence: persistent
+        sharing: shared
+        mutability: read-only
+        durability: data
+        container_path: /data/movies
 
     lifecycle:
       restart:
@@ -79,6 +91,15 @@ config_schema:
     visibility: visible
     source: user
 
+  - id: discovery_port
+    label: LAN Discovery Port (UDP)
+    type: port
+    default: 7359
+    binds_to: services.jellyfin.networking.ports.discovery.published_port
+    required: false
+    visibility: advanced
+    source: user
+
   - id: config_path
     label: Config Path
     type: storage_path
@@ -88,14 +109,25 @@ config_schema:
     visibility: visible
     source: user
 
-  - id: media_path
-    label: Media Path
+  - id: tv_path
+    label: TV Shows Path
     type: storage_path
-    default: /media
-    binds_to: services.jellyfin.storage.media.host_path
+    default: /media/tvshows
+    binds_to: services.jellyfin.storage.tv.host_path
     required: true
     visibility: visible
     source: user
+    placeholder: "Host path to your TV show library"
+
+  - id: movies_path
+    label: Movies Path
+    type: storage_path
+    default: /media/movies
+    binds_to: services.jellyfin.storage.movies.host_path
+    required: true
+    visibility: visible
+    source: user
+    placeholder: "Host path to your movie library"
 
   - id: admin_username
     label: Admin Username
