@@ -137,6 +137,8 @@ steps:
       require this token in the Authorization header.
 
   # --- Create a permanent API key ---
+  # POST /Auth/Keys returns 204 No Content — the key is not in the response body.
+  # We must follow up with GET /Auth/Keys and take the most recently created entry.
 
   - id: create_api_key
     type: http_request
@@ -145,17 +147,33 @@ steps:
     headers:
       Content-Type: "application/json"
       X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
-    bind_response_json:
-      bind_as: jellyfin_api_key
-      path: "Key"
     on_error: fail
     critical: true
     timeout_seconds: 30
     depends_on:
       - authenticate
     description: >
-      Create a permanent named API key for Arrqitect. Returns a Key value
-      that does not expire, unlike the session token from AuthenticateByName.
+      Create a permanent named API key for Arrqitect. Returns 204 No Content —
+      the key value must be fetched separately via GET /Auth/Keys.
+
+  - id: fetch_api_keys
+    type: http_request
+    method: GET
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Auth/Keys"
+    headers:
+      X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
+    bind_response_json:
+      bind_as: jellyfin_api_key
+      path: "Items.0.AccessToken"
+    on_error: fail
+    critical: true
+    timeout_seconds: 30
+    depends_on:
+      - create_api_key
+    description: >
+      Fetch the list of API keys and extract the most recently created one.
+      Jellyfin returns keys in descending creation order so Items[0] is the key
+      we just created.
 
   # --- Publish capabilities ---
 
@@ -167,7 +185,7 @@ steps:
     critical: true
     timeout_seconds: 10
     depends_on:
-      - create_api_key
+      - fetch_api_keys
     description: Publish the permanent API key so consumers can authenticate to Jellyfin.
 
   - id: publish_url_internal

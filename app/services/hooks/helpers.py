@@ -31,9 +31,15 @@ def resolve_path(dotpath: str, context: dict):
     parts = dotpath.split(".")
     current = context
     for part in parts:
-        if not isinstance(current, dict):
+        if isinstance(current, list):
+            try:
+                current = current[int(part)]
+            except (ValueError, IndexError):
+                return None
+        elif isinstance(current, dict):
+            current = current.get(part)
+        else:
             return None
-        current = current.get(part)
         if current is None:
             return None
     return current
