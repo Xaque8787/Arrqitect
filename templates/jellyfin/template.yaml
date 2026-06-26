@@ -39,16 +39,16 @@ services:
 
       - id: tv
         persistence: persistent
-        sharing: shared
+        propagation: shared
         mutability: read-only
-        durability: data
+        durability: user-data
         container_path: /data/tvshows
 
       - id: movies
         persistence: persistent
-        sharing: shared
+        propagation: shared
         mutability: read-only
-        durability: data
+        durability: user-data
         container_path: /data/movies
 
     lifecycle:
