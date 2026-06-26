@@ -12,6 +12,10 @@
     {
       "slug": "sonarr",
       "path": "sonarr/template.yaml"
+    },
+    {
+      "slug": "jellyfin",
+      "path": "jellyfin/template.yaml"
     }
   ]
 }

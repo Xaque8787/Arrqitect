@@ -129,7 +129,8 @@ def validate_hook(
             ))
             has_parse_error = True
         elif step_type not in ("registry_read", "registry_write", "http_request",
-                               "compose_command", "log"):
+                               "compose_command", "log", "wait_for_file",
+                               "wait_for_http", "file_read", "file_write"):
             results.append(ValidationResult(
                 severity=ValidatorSeverity.ERROR,
                 step_id=step_id,

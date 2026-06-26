@@ -1,0 +1,200 @@
+description: >
+  Run Jellyfin's first-boot startup wizard, then obtain and publish an API key.
+
+  Readiness strategy: /System/Ping returns 200 as soon as the HTTP stack is
+  alive, but the wizard endpoints need additional initialisation time before
+  they accept calls. We poll GET /Startup/User instead — that endpoint only
+  becomes available once the wizard machinery is actually ready, so a 2xx
+  from it is a genuine readiness signal rather than a false positive from a
+  half-started server.
+
+  Wizard sequence (all unauthenticated):
+    POST /Startup/Configuration  — set locale and metadata defaults
+    POST /Startup/User           — create the admin account
+    POST /Startup/RemoteAccess   — enable remote access
+    POST /Startup/Complete       — seal the wizard
+
+  API key sequence (authenticated via session token):
+    POST /Users/AuthenticateByName — obtain a short-lived session token
+    POST /Auth/Keys                — create a permanent API key; extract Key
+    registry_write                 — publish as jellyfin.api_key
+
+  URL capabilities are published after the wizard is sealed.
+
+steps:
+  # --- Readiness: wait until the wizard endpoint accepts requests ---
+
+  - id: wait_for_wizard
+    type: wait_for_http
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Startup/User"
+    method: GET
+    poll_interval_seconds: 5
+    timeout_seconds: 300
+    on_error: fail
+    critical: true
+    description: >
+      Poll GET /Startup/User until Jellyfin's startup wizard is ready to
+      receive configuration. This is more reliable than pinging /System/Ping
+      which returns 200 before the wizard machinery is initialised.
+
+  # --- Startup wizard (unauthenticated) ---
+
+  - id: wizard_configuration
+    type: http_request
+    method: POST
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Startup/Configuration"
+    headers:
+      Content-Type: "application/json"
+    body_template: '{"UICulture":"en-US","MetadataCountryCode":"US","PreferredMetadataLanguage":"en"}'
+    on_error: fail
+    critical: true
+    timeout_seconds: 30
+    depends_on:
+      - wait_for_wizard
+    description: Apply initial locale and metadata configuration.
+
+  - id: wizard_create_user
+    type: http_request
+    method: POST
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Startup/User"
+    headers:
+      Content-Type: "application/json"
+    body_template: '{"Name":"<<inputs.admin_username>>","Password":"<<inputs.admin_password>>"}'
+    on_error: fail
+    critical: true
+    timeout_seconds: 30
+    depends_on:
+      - wizard_configuration
+    description: Create the admin account using the credentials from config.
+
+  - id: wizard_remote_access
+    type: http_request
+    method: POST
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Startup/RemoteAccess"
+    headers:
+      Content-Type: "application/json"
+    body_template: '{"EnableRemoteAccess":true,"EnableAutomaticPortMapping":false}'
+    on_error: fail
+    critical: true
+    timeout_seconds: 30
+    depends_on:
+      - wizard_create_user
+    description: Enable remote access without UPnP port mapping.
+
+  - id: wizard_complete
+    type: http_request
+    method: POST
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Startup/Complete"
+    headers:
+      Content-Type: "application/json"
+    on_error: fail
+    critical: true
+    timeout_seconds: 30
+    depends_on:
+      - wizard_remote_access
+    description: Seal the startup wizard. After this the /Startup/* endpoints are gone.
+
+  # --- Readiness: wait for the main API to become available post-wizard ---
+  # The server briefly reinitialises after /Startup/Complete. Polling
+  # /System/Info/Public confirms the full API stack is ready before we
+  # attempt authenticated calls.
+
+  - id: wait_for_api
+    type: wait_for_http
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/System/Info/Public"
+    method: GET
+    poll_interval_seconds: 5
+    timeout_seconds: 120
+    on_error: fail
+    critical: true
+    depends_on:
+      - wizard_complete
+    description: >
+      Wait for the main Jellyfin API to be ready after the wizard seals.
+      /System/Info/Public is only available on a fully initialised server.
+
+  # --- Authenticate as admin to get a session token ---
+
+  - id: authenticate
+    type: http_request
+    method: POST
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Users/AuthenticateByName"
+    headers:
+      Content-Type: "application/json"
+      X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0"'
+    body_template: '{"Username":"<<inputs.admin_username>>","Pw":"<<inputs.admin_password>>"}'
+    bind_response_json:
+      bind_as: jellyfin_session_token
+      path: "AccessToken"
+    on_error: fail
+    critical: true
+    timeout_seconds: 30
+    depends_on:
+      - wait_for_api
+    description: >
+      Authenticate with username/password to obtain a short-lived session token.
+      Jellyfin does not support per-request basic auth — all subsequent calls
+      require this token in the Authorization header.
+
+  # --- Create a permanent API key ---
+
+  - id: create_api_key
+    type: http_request
+    method: POST
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Auth/Keys?app=Arrqitect"
+    headers:
+      Content-Type: "application/json"
+      X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
+    bind_response_json:
+      bind_as: jellyfin_api_key
+      path: "Key"
+    on_error: fail
+    critical: true
+    timeout_seconds: 30
+    depends_on:
+      - authenticate
+    description: >
+      Create a permanent named API key for Arrqitect. Returns a Key value
+      that does not expire, unlike the session token from AuthenticateByName.
+
+  # --- Publish capabilities ---
+
+  - id: publish_api_key
+    type: registry_write
+    key: jellyfin.api_key
+    value_template: "<<registry.jellyfin_api_key>>"
+    on_error: fail
+    critical: true
+    timeout_seconds: 10
+    depends_on:
+      - create_api_key
+    description: Publish the permanent API key so consumers can authenticate to Jellyfin.
+
+  - id: publish_url_internal
+    type: registry_write
+    key: jellyfin.url_internal
+    value_template: "jellyfin:8096"
+    on_error: fail
+    critical: true
+    timeout_seconds: 10
+    depends_on:
+      - publish_api_key
+    description: Publish Jellyfin's Docker service hostname for container-to-container access.
+
+  - id: publish_url_external
+    type: registry_write
+    key: jellyfin.url_external
+    value_template: "host.docker.internal:<<inputs.web_ui_port>>"
+    on_error: fail
+    critical: true
+    timeout_seconds: 10
+    depends_on:
+      - publish_url_internal
+    description: Publish the host-accessible URL for hook executor HTTP calls.
+
+  - id: log_complete
+    type: log
+    message: "Jellyfin post-install: wizard complete, API key published, capabilities registered"
+    depends_on:
+      - publish_url_external
+    timeout_seconds: 5

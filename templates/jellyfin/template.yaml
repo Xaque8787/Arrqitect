@@ -1,0 +1,123 @@
+schema_version: 2
+
+app:
+  id: jellyfin
+  name: Jellyfin
+  version: "1.0.0"
+  flavor: linuxserver
+  allow_custom_env: true
+  allow_custom_storage: true
+
+description: Free, open source media server. Stream movies, TV, music, and more.
+icon_url: https://raw.githubusercontent.com/jellyfin/jellyfin-ux/master/branding/SVG/icon-transparent.svg
+
+services:
+  - id: jellyfin
+    image:
+      repository: lscr.io/linuxserver/jellyfin
+      tag: latest
+
+    networking:
+      ports:
+        - id: web_ui
+          listen_port: 8096
+          protocol: http
+          reachability: external
+
+    storage:
+      - id: config
+        persistence: persistent
+        sharing: private
+        mutability: read-write
+        durability: configuration
+        container_path: /config
+
+      - id: media
+        persistence: persistent
+        sharing: shared
+        mutability: read-only
+        durability: data
+        container_path: /media
+
+    lifecycle:
+      restart:
+        behavior: persistent
+      healthcheck:
+        test:
+          type: shell
+          command: "curl -sf http://localhost:8096/health || exit 1"
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 120s
+
+provides:
+  - key: jellyfin.url_internal
+    type: endpoint
+    sensitive: false
+    rotates: false
+
+  - key: jellyfin.url_external
+    type: endpoint
+    sensitive: false
+    rotates: false
+
+  - key: jellyfin.api_key
+    type: credential
+    sensitive: true
+    rotates: false
+
+consumes: []
+
+config_schema:
+  - id: web_ui_port
+    label: Web UI Port
+    type: port
+    default: 8096
+    binds_to: services.jellyfin.networking.ports.web_ui.published_port
+    required: true
+    visibility: visible
+    source: user
+
+  - id: config_path
+    label: Config Path
+    type: storage_path
+    default: ./config
+    binds_to: services.jellyfin.storage.config.host_path
+    required: true
+    visibility: visible
+    source: user
+
+  - id: media_path
+    label: Media Path
+    type: storage_path
+    default: /media
+    binds_to: services.jellyfin.storage.media.host_path
+    required: true
+    visibility: visible
+    source: user
+
+  - id: admin_username
+    label: Admin Username
+    type: string
+    default: ""
+    binds_to: null
+    required: true
+    visibility: visible
+    source: user
+    placeholder: "Username for the Jellyfin admin account"
+
+  - id: admin_password
+    label: Admin Password
+    type: string
+    default: ""
+    binds_to: null
+    required: true
+    visibility: visible
+    source: user
+    sensitive: true
+    placeholder: "Password for the Jellyfin admin account"
+
+hooks:
+  post_install: hooks/post_install.yaml
+  pre_remove: hooks/pre_remove.yaml

@@ -1,0 +1,58 @@
+description: >
+  Pre-remove cleanup for Jellyfin.
+  Revokes the Arrqitect API key from Jellyfin before the container is removed,
+  keeping Jellyfin's key list clean if it is ever restored from the same config.
+  Guarded by on_error: continue — if Jellyfin is already unreachable the
+  cleanup is best-effort and should not block removal.
+
+steps:
+  - id: read_api_key
+    type: registry_read
+    key: jellyfin.api_key
+    bind_as: jellyfin_api_key
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    description: Read the stored API key. Empty means it was never published.
+
+  - id: read_session_token
+    type: http_request
+    method: POST
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Users/AuthenticateByName"
+    headers:
+      Content-Type: "application/json"
+      X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0"'
+    body_template: '{"Username":"<<inputs.admin_username>>","Pw":"<<inputs.admin_password>>"}'
+    bind_response_json:
+      bind_as: jellyfin_session_token
+      path: "AccessToken"
+    when: "registry.jellyfin_api_key != ''"
+    on_error: continue
+    critical: false
+    timeout_seconds: 30
+    depends_on:
+      - read_api_key
+    description: Obtain a session token to authorise the key revocation call.
+
+  - id: revoke_api_key
+    type: http_request
+    method: DELETE
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Auth/Keys/<<registry.jellyfin_api_key>>"
+    headers:
+      X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
+    when: "registry.jellyfin_session_token != ''"
+    on_error: continue
+    critical: false
+    timeout_seconds: 30
+    depends_on:
+      - read_session_token
+    description: >
+      Revoke the Arrqitect API key from Jellyfin. Best-effort — failure does
+      not block removal.
+
+  - id: log_complete
+    type: log
+    message: "Jellyfin pre-remove: API key revocation attempted"
+    depends_on:
+      - revoke_api_key
+    timeout_seconds: 5
