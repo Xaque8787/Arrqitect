@@ -78,6 +78,8 @@ class ServiceModel(BaseModel):
     networking: NetworkingModel = NetworkingModel()
     storage: list[StorageModel] = []
     lifecycle: LifecycleModel = LifecycleModel()
+    required_devices: list[Literal["fuse"]] = []
+    mac_policy: Literal["default", "unconfined"] = "default"
 
     @field_validator("storage")
     @classmethod

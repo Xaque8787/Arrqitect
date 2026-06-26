@@ -288,6 +288,10 @@ def resolve_custom_env(custom_entries: list[dict]) -> list[EnvVarIR]:
     return env_vars
 
 
+def resolve_runtime_constraints(service: ServiceModel) -> tuple[list[str], str]:
+    return list(service.required_devices), service.mac_policy
+
+
 def resolve_lifecycle(service: ServiceModel) -> LifecycleIR:
     healthcheck: HealthcheckIR | None = None
     if service.lifecycle.healthcheck is not None:

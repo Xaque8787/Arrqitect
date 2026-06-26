@@ -72,6 +72,8 @@ class ServiceIR(BaseModel):
     ports: list[PortIR]
     networks: list[NetworkMembershipIR]
     lifecycle: LifecycleIR
+    required_devices: list[str] = []
+    mac_policy: Literal["default", "unconfined"] = "default"
 
 
 class NetworkIR(BaseModel):

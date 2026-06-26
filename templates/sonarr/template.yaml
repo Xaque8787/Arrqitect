@@ -3,7 +3,7 @@ schema_version: 2
 app:
   id: sonarr
   name: Sonarr
-  version: "1.4.0"
+  version: "1.5.0"
   flavor: linuxserver
   allow_custom_env: true
   allow_custom_storage: true
@@ -32,19 +32,12 @@ services:
         durability: configuration
         container_path: /config
 
-      - id: tv
+      - id: media
         persistence: persistent
-        propagation: shared
+        propagation: rshared
         mutability: read-write
         durability: user-data
-        container_path: /tv
-
-      - id: downloads
-        persistence: persistent
-        propagation: shared
-        mutability: read-write
-        durability: transient
-        container_path: /downloads
+        container_path: /media
 
     lifecycle:
       restart:
@@ -98,20 +91,11 @@ config_schema:
     visibility: visible
     source: user
 
-  - id: tv_path
-    label: TV Path
+  - id: media_path
+    label: Media Path
     type: storage_path
-    default: ""
-    binds_to: services.sonarr.storage.tv.host_path
-    required: true
-    visibility: visible
-    source: user
-
-  - id: downloads_path
-    label: Downloads Path
-    type: storage_path
-    default: ""
-    binds_to: services.sonarr.storage.downloads.host_path
+    default: /media
+    binds_to: services.sonarr.storage.media.host_path
     required: true
     visibility: visible
     source: user
@@ -121,36 +105,6 @@ config_schema:
     type: string
     default: private
     binds_to: services.sonarr.storage.config.propagation
-    required: false
-    visibility: advanced
-    source: user
-    ui_widget: select
-    allowed_values:
-      - private
-      - shared
-      - slave
-      - rslave
-
-  - id: tv_propagation
-    label: TV Mount Propagation
-    type: string
-    default: shared
-    binds_to: services.sonarr.storage.tv.propagation
-    required: false
-    visibility: advanced
-    source: user
-    ui_widget: select
-    allowed_values:
-      - private
-      - shared
-      - slave
-      - rslave
-
-  - id: downloads_propagation
-    label: Downloads Mount Propagation
-    type: string
-    default: shared
-    binds_to: services.sonarr.storage.downloads.propagation
     required: false
     visibility: advanced
     source: user

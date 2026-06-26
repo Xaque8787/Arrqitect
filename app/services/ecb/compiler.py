@@ -20,6 +20,7 @@ from app.services.ecb.resolver import (
     resolve_custom_storage,
     resolve_custom_env,
     resolve_lifecycle,
+    resolve_runtime_constraints,
 )
 from app.services.ecb.network import infer_networks
 
@@ -99,6 +100,7 @@ def compile_app(
         merged_env = list(env_by_name.values())
 
         lifecycle = resolve_lifecycle(service_tmpl)
+        required_devices, mac_policy = resolve_runtime_constraints(service_tmpl)
 
         services.append(ServiceIR(
             id=service_tmpl.id,
@@ -109,6 +111,8 @@ def compile_app(
             ports=ports,
             networks=memberships,
             lifecycle=lifecycle,
+            required_devices=required_devices,
+            mac_policy=mac_policy,
         ))
 
     app_ir = AppIR(

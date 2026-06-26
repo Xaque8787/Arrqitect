@@ -9,6 +9,7 @@ services:
       - ./templates:/app/templates
       - ./compose:/compose
       - ${DATA_DIR:-./data}:/data
+      - ${MEDIA_DIR:-./media}:/media
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - PUID=${PUID:-1000}

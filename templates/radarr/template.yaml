@@ -3,7 +3,7 @@ schema_version: 2
 app:
   id: radarr
   name: Radarr
-  version: "1.4.0"
+  version: "1.5.0"
   flavor: linuxserver
   allow_custom_env: true
   allow_custom_storage: true
@@ -32,19 +32,12 @@ services:
         durability: configuration
         container_path: /config
 
-      - id: movies
+      - id: media
         persistence: persistent
-        propagation: shared
+        propagation: rshared
         mutability: read-write
         durability: user-data
-        container_path: /movies
-
-      - id: downloads
-        persistence: persistent
-        propagation: shared
-        mutability: read-write
-        durability: transient
-        container_path: /downloads
+        container_path: /media
 
     lifecycle:
       restart:
@@ -98,11 +91,11 @@ config_schema:
     visibility: visible
     source: user
 
-  - id: movies_path
-    label: Movies Path
+  - id: media_path
+    label: Media Path
     type: storage_path
-    default: ""
-    binds_to: services.radarr.storage.movies.host_path
+    default: /media
+    binds_to: services.radarr.storage.media.host_path
     required: true
     visibility: visible
     source: user
@@ -110,52 +103,13 @@ config_schema:
       - app: prowlarr
         action: yts
         severity: error
-        message: "Movies Path requires the Prowlarr YTS indexer action to be configured"
-
-  - id: downloads_path
-    label: Downloads Path
-    type: storage_path
-    default: ""
-    binds_to: services.radarr.storage.downloads.host_path
-    required: true
-    visibility: visible
-    source: user
+        message: "Media Path requires the Prowlarr YTS indexer action to be configured"
 
   - id: config_propagation
     label: Config Mount Propagation
     type: string
     default: private
     binds_to: services.radarr.storage.config.propagation
-    required: false
-    visibility: advanced
-    source: user
-    ui_widget: select
-    allowed_values:
-      - private
-      - shared
-      - slave
-      - rslave
-
-  - id: movies_propagation
-    label: Movies Mount Propagation
-    type: string
-    default: shared
-    binds_to: services.radarr.storage.movies.propagation
-    required: false
-    visibility: advanced
-    source: user
-    ui_widget: select
-    allowed_values:
-      - private
-      - shared
-      - slave
-      - rslave
-
-  - id: downloads_propagation
-    label: Downloads Mount Propagation
-    type: string
-    default: shared
-    binds_to: services.radarr.storage.downloads.propagation
     required: false
     visibility: advanced
     source: user

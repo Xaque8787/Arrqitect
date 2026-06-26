@@ -4,9 +4,13 @@ set -e
 PUID=${PUID:-1000}
 PGID=${PGID:-1000}
 
-# Ensure compose and data directories exist with correct ownership
+# Ensure compose, data, and media directories exist with correct ownership
 mkdir -p /compose /data
-chown -R ${PUID}:${PGID} /compose /data
+mkdir -p /media/movies /media/4k_movies /media/shows /media/4k_shows \
+         /media/anime /media/music \
+         /media/downloads/complete /media/downloads/incomplete \
+         /media/cache /media/remotes
+chown -R ${PUID}:${PGID} /compose /data /media
 
 # Create group if it doesn't exist
 if ! getent group appgroup > /dev/null 2>&1; then

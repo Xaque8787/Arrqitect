@@ -45,6 +45,13 @@ Semantic lowering rules:
     exec     -> test: ["CMD", *command_list]
     disable  -> test: ["NONE"]
     absent   -> healthcheck block omitted (image default preserved)
+
+  required_devices:
+    ["fuse"]  -> devices: ["/dev/fuse:/dev/fuse"]
+
+  mac_policy:
+    default    -> (omitted)
+    unconfined -> security_opt: ["apparmor:unconfined"]
 """
 
 from __future__ import annotations
@@ -130,6 +137,12 @@ class ComposeRenderer:
         net_ids = sorted(m.network_id for m in svc.networks)
         if net_ids:
             result["networks"] = net_ids
+
+        if svc.required_devices:
+            result["devices"] = [f"/dev/{d}:/dev/{d}" for d in svc.required_devices]
+
+        if svc.mac_policy == "unconfined":
+            result["security_opt"] = ["apparmor:unconfined"]
 
         result["extra_hosts"] = ["host.docker.internal:host-gateway"]
         result["restart"] = _RESTART_MAP[svc.lifecycle.restart_behavior]
