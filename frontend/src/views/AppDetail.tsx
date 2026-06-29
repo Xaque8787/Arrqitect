@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, Trash2, Eye, RefreshCw, X, Plus, Zap, Play, CircleArrowUp as ArrowUpCircle, RotateCcw, Monitor, ScrollText } from "lucide-react";
+import { ArrowLeft, Trash2, Eye, RefreshCw, X, Plus, Zap, Play, CircleArrowUp as ArrowUpCircle, RotateCcw, Monitor, ScrollText, Wrench } from "lucide-react";
 import { api, resolveHostPath, fieldPlaceholder } from "../api";
 import type { InstalledApp, ConfigField, PreviewResult, CustomEnvEntry, CustomStorageEntry, ActionsSchema, ActionDef, ActionVariantDef, ActionFieldDef, AppActionRecord, TemplateUpdatePreview, Job, AppSnapshot, ContainerStatus, ContainerService } from "../api";
 
@@ -439,6 +439,12 @@ export default function AppDetail() {
     });
   }, []);
 
+  const handleRepair = async () => {
+    if (!app) return;
+    const { job } = await api.apps.repair(app.id);
+    navigate(`/jobs/${job.id}`);
+  };
+
   const handleRemove = async () => {
     if (!app || !confirm(`Remove ${app.name}? This will run docker compose down.`)) return;
     setRemoving(true);
@@ -518,6 +524,11 @@ export default function AppDetail() {
           <button className="btn btn-ghost btn-sm" onClick={() => setEditOpen(true)}>
             <RefreshCw size={14} /> Edit Config
           </button>
+          {app.state === "error" && (
+            <button className="btn btn-warning btn-sm" onClick={handleRepair}>
+              <Wrench size={14} /> Repair
+            </button>
+          )}
           <button className="btn btn-danger btn-sm" onClick={handleRemove} disabled={removing}>
             <Trash2 size={14} /> Remove
           </button>

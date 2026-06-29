@@ -86,6 +86,8 @@
 .btn-ghost:hover:not(:disabled) { color: var(--color-text); border-color: var(--color-border-hover); }
 .btn-danger { background: var(--color-error-dim); color: var(--color-error); border: 1px solid transparent; }
 .btn-danger:hover:not(:disabled) { background: var(--color-error); color: #fff; }
+.btn-warning { background: var(--color-warning-dim); color: var(--color-warning); border: 1px solid transparent; }
+.btn-warning:hover:not(:disabled) { background: var(--color-warning); color: #fff; }
 .btn-sm { padding: 5px 10px; font-size: 12px; }
 
 /* Badge */

@@ -201,6 +201,28 @@ async def remove_app(app_id: str):
     return {"job": job}
 
 
+@router.post("/{app_id}/repair")
+async def repair_app(app_id: str):
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT id, state FROM installed_apps WHERE id = ?", (app_id,)
+        ) as cur:
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    d = dict(row)
+    if d["state"] not in ("error", "running", "stopped"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot repair app in state '{d['state']}'"
+        )
+
+    job = await enqueue_job(app_id, "repair")
+    return {"job": job}
+
+
 @router.post("/{app_id}/preview")
 async def preview(app_id: str):
     from pathlib import Path

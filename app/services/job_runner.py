@@ -362,6 +362,8 @@ async def _run_job(job_id: str, app_id: str, job_type: str, dry_run: bool) -> No
             has_degraded = await _run_update(job_id, app_id, app, dry_run)
         elif job_type == "remove":
             await _run_remove(job_id, app_id, app, dry_run)
+        elif job_type == "repair":
+            has_degraded = await _run_repair(job_id, app_id, app)
         elif job_type == "rollback":
             async with get_db() as db:
                 async with db.execute("SELECT meta FROM jobs WHERE id = ?", (job_id,)) as cur:
@@ -641,6 +643,37 @@ async def _prep_provider_networks(job_id: str, providers: list[dict]) -> None:
         except Exception as exc:
             await _add_step(job_id, f"prep_provider_{slug}", StepStatus.CONTINUE_SUCCESS.value,
                             f"Provider network prep failed (non-fatal): {exc}", finished_at=_now())
+
+
+async def _run_repair(job_id: str, app_id: str, app: dict) -> bool:
+    """
+    Re-run the post_install hook against an already-deployed app.
+    Does not touch Docker — compose is assumed to be running.
+    The hook's own when: guards determine which steps actually execute.
+    """
+    hooks = app.get("hook_definitions", {})
+    slug = app["slug"]
+
+    if not hooks.get("post_install"):
+        await _add_step(job_id, "repair", StepStatus.SKIPPED.value,
+                        "No post_install hook defined for this app", finished_at=_now())
+        await _set_app_state(app_id, "running")
+        return False
+
+    await _add_step(job_id, "repair", "running", f"Re-running post_install hook for {slug}")
+    has_degraded = await _run_hook(job_id, app_id, slug, hooks, "post_install")
+    await _add_step(job_id, "repair", StepStatus.SUCCESS.value,
+                    "post_install hook completed", finished_at=_now())
+
+    await trigger_reconcile_for_consumers(
+        provider_app_id=app_id,
+        event_type="capability_changed",
+        payload={"provider_slug": slug},
+        is_reconcile=False,
+    )
+
+    await _set_app_state(app_id, "running")
+    return has_degraded
 
 
 async def _run_install(job_id: str, app_id: str, app: dict, dry_run: bool) -> bool:

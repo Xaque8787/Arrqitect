@@ -1,12 +1,10 @@
 description: >
   Run Jellyfin's first-boot startup wizard, then obtain and publish an API key.
 
-  Readiness strategy: /System/Ping returns 200 as soon as the HTTP stack is
-  alive, but the wizard endpoints need additional initialisation time before
-  they accept calls. We poll GET /Startup/User instead — that endpoint only
-  becomes available once the wizard machinery is actually ready, so a 2xx
-  from it is a genuine readiness signal rather than a false positive from a
-  half-started server.
+  Idempotency: the first step reads any previously published API key from the
+  registry. If a key already exists, the wizard and auth steps are skipped and
+  the repair path republishes the existing values. If no key exists, the full
+  wizard flow runs as normal.
 
   Wizard sequence (all unauthenticated):
     POST /Startup/Configuration  — set locale and metadata defaults
@@ -19,25 +17,41 @@ description: >
     POST /Auth/Keys                — create a permanent API key; extract Key
     registry_write                 — publish as jellyfin.api_key
 
-  URL capabilities are published after the wizard is sealed.
-
 steps:
+  # --- Check for existing published API key (idempotency guard) ---
+
+  - id: check_existing_api_key
+    type: registry_read
+    key: jellyfin.api_key
+    bind_as: existing_api_key
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    description: >
+      Read any previously published API key. Non-empty means Jellyfin was
+      already configured — wizard and auth steps cascade-skip, and the repair
+      path re-publishes the existing values. Empty means fresh install.
+
   # --- Readiness: wait until the wizard endpoint accepts requests ---
+  # Skipped when existing_api_key is non-empty.
 
   - id: wait_for_wizard
     type: wait_for_http
+    when: "registry.existing_api_key == ''"
     url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Startup/User"
     method: GET
     poll_interval_seconds: 5
     timeout_seconds: 300
     on_error: fail
     critical: true
+    depends_on:
+      - check_existing_api_key
     description: >
       Poll GET /Startup/User until Jellyfin's startup wizard is ready to
-      receive configuration. This is more reliable than pinging /System/Ping
-      which returns 200 before the wizard machinery is initialised.
+      receive configuration. Skipped on repair when API key is already published.
 
   # --- Startup wizard (unauthenticated) ---
+  # All depend on wait_for_wizard; they cascade-skip on repair.
 
   - id: wizard_configuration
     type: http_request
@@ -95,9 +109,6 @@ steps:
     description: Seal the startup wizard. After this the /Startup/* endpoints are gone.
 
   # --- Readiness: wait for the main API to become available post-wizard ---
-  # The server briefly reinitialises after /Startup/Complete. Polling
-  # /System/Info/Public confirms the full API stack is ready before we
-  # attempt authenticated calls.
 
   - id: wait_for_api
     type: wait_for_http
@@ -111,7 +122,7 @@ steps:
       - wizard_complete
     description: >
       Wait for the main Jellyfin API to be ready after the wizard seals.
-      /System/Info/Public is only available on a fully initialised server.
+      Cascade-skipped on repair since wizard_complete is skipped.
 
   # --- Authenticate as admin to get a session token ---
 
@@ -133,8 +144,7 @@ steps:
       - wait_for_api
     description: >
       Authenticate with username/password to obtain a short-lived session token.
-      Jellyfin does not support per-request basic auth — all subsequent calls
-      require this token in the Authorization header.
+      Cascade-skipped on repair.
 
   # --- Create a permanent API key ---
   # POST /Auth/Keys returns 204 No Content — the key is not in the response body.
@@ -172,10 +182,9 @@ steps:
       - create_api_key
     description: >
       Fetch the list of API keys and extract the most recently created one.
-      Jellyfin returns keys in descending creation order so Items[0] is the key
-      we just created.
+      Cascade-skipped on repair.
 
-  # --- Publish capabilities ---
+  # --- Publish capabilities (fresh install path) ---
 
   - id: publish_api_key
     type: registry_write
@@ -215,4 +224,52 @@ steps:
     message: "Jellyfin post-install: wizard complete, API key published, capabilities registered"
     depends_on:
       - publish_url_external
+    timeout_seconds: 5
+
+  # --- Repair path: re-publish existing values when key already exists ---
+  # These steps only activate when existing_api_key is non-empty (repair).
+  # On fresh install existing_api_key == '' so they are all skipped.
+
+  - id: repair_publish_api_key
+    type: registry_write
+    key: jellyfin.api_key
+    value_template: "<<registry.existing_api_key>>"
+    when: "registry.existing_api_key != ''"
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    depends_on:
+      - check_existing_api_key
+    description: Re-publish the existing API key on repair (bumps capability_version to notify consumers).
+
+  - id: repair_publish_url_internal
+    type: registry_write
+    key: jellyfin.url_internal
+    value_template: "jellyfin:8096"
+    when: "registry.existing_api_key != ''"
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    depends_on:
+      - repair_publish_api_key
+    description: Re-publish internal URL on repair.
+
+  - id: repair_publish_url_external
+    type: registry_write
+    key: jellyfin.url_external
+    value_template: "host.docker.internal:<<inputs.web_ui_port>>"
+    when: "registry.existing_api_key != ''"
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    depends_on:
+      - repair_publish_url_internal
+    description: Re-publish external URL on repair.
+
+  - id: repair_log_complete
+    type: log
+    message: "Jellyfin repair: existing API key and URLs re-published"
+    when: "registry.existing_api_key != ''"
+    depends_on:
+      - repair_publish_url_external
     timeout_seconds: 5

@@ -324,6 +324,8 @@ export const api = {
       req<{ job: Job }>(`/api/apps/${id}/rollback/${snapshot_id}`, { method: "POST" }),
     containerStatus: (id: string) =>
       req<ContainerStatus>(`/api/apps/${id}/status`),
+    repair: (id: string) =>
+      req<{ job: Job }>(`/api/apps/${id}/repair`, { method: "POST" }),
     containerLogs: (id: string, service?: string, lines?: number) => {
       const params = new URLSearchParams();
       if (service) params.set("service", service);
