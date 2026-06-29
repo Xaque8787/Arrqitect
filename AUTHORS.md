@@ -33,6 +33,12 @@ This guide covers everything you need to write app templates for Arrqitect. It a
 7. [Validation Rules](#7-validation-rules)
 8. [Complete Examples](#8-complete-examples)
 9. [Design Patterns](#9-design-patterns)
+   - [Graceful degradation](#graceful-degradation)
+   - [Idempotent registration](#idempotent-registration)
+   - [Publishing capabilities immediately](#publishing-capabilities-immediately)
+   - [Safe removal](#safe-removal)
+   - [Repair-safe hooks](#repair-safe-hooks)
+   - [Versioning your template](#versioning-your-template)
 
 ---
 
@@ -159,7 +165,15 @@ services:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `repository` | string | yes | Image name without tag. |
-| `tag` | string | yes | Image tag. Use pinned versions for stability. |
+| `tag` | string | yes | Image tag. |
+
+**Pin specific image tags.** Using `latest` is allowed but strongly discouraged.
+
+Docker does not re-pull `latest` just because you push a new image upstream — it only pulls when the image is absent from the local cache. This means a user running the same `latest`-tagged app for months may be running a very old image without knowing it. Bumping your template's `app.version` signals to users that an update is available, but the Docker layer will not automatically fetch the new image unless the host explicitly runs `docker compose pull`.
+
+Pin a specific version tag (`1.0.0`, `5.14.0`, `2.4.0.5397-ls149`). When you publish a new template version, update the tag. Users who update their installed app will get a predictable, auditable change. Rollbacks also become meaningful: the snapshot records which template version was installed, and that template version points to a specific image.
+
+If you use `latest`, declare that clearly in your template description so users know the image content may drift over time.
 
 #### networking.ports
 
@@ -899,7 +913,7 @@ steps:
 
 ### 3.4 when: conditions
 
-The `when:` field guards a step with a boolean condition. The step is skipped (not failed) if the condition evaluates to false.
+The `when:` field guards a step with a boolean condition. The step is **skipped** (not failed) if the condition evaluates to false.
 
 ```yaml
 when: "registry.prowlarr_api_key != ''"
@@ -932,6 +946,53 @@ when: "reconcile.event_type == 'capability_changed'"
 # Combine both conditions
 when: "registry.prowlarr_api_key != '' and registry.existing_app_id == ''"
 ```
+
+---
+
+### Why when: guards are strongly recommended
+
+Hooks do not run only once. They run on:
+
+- **Fresh install** — the happy path you write for initially.
+- **Repair** — a user manually re-triggers the hook after a partial failure.
+- **Reconcile** — an automatic re-run when a consumed capability changes.
+
+Without `when:` guards, every step assumes it is operating on a blank slate. This breaks on the second run. A step that calls `POST /api/v1/applications` to register an app will create a duplicate. A step that calls a first-run wizard endpoint will time out or return a 404 once the wizard is sealed. A step that creates an admin account will fail with a conflict.
+
+**`when:` is the mechanism that makes hooks safe to run more than once.** It is not an optional enhancement — it is how you write a correct hook.
+
+#### The cascade-skip behavior
+
+When a step is skipped (either because its `when:` condition is false, or because a dependency was not satisfied), every downstream step that depends on it is also skipped automatically. The `depends_on` chain propagates the skip forward.
+
+This means you rarely need to put `when:` on every step in a chain. Put it on the first step that should be guarded; all steps that depend on it will cascade-skip without any additional `when:` clauses.
+
+```
+wait_for_wizard [when: key == '']
+  → wizard_step_1         (skips if wait_for_wizard was skipped)
+    → wizard_step_2       (skips if wizard_step_1 was skipped)
+      → wizard_step_3     (skips if wizard_step_2 was skipped)
+```
+
+One guard at the top of a chain, everything downstream follows automatically.
+
+#### The repair branch pattern
+
+For **provider** apps (apps that run a first-run wizard or a one-time setup sequence), a single guard at the top is not enough. The problem is that `depends_on` cuts both ways: downstream steps not only cascade-skip when their dependencies are skipped, they also cascade-skip when dependencies fail. This means you cannot rely on the original "publish capabilities" steps at the end of the wizard chain to run on repair — they depend on wizard steps that are correctly skipped, but a skipped dependency is not satisfying.
+
+The solution is a **parallel repair branch**: a second set of `registry_write` steps that depend only on the initial check step, activate when the capability already exists, and re-publish the existing values.
+
+```
+check_existing_key [registry_read, on_error: continue]
+  ├── wait_for_wizard    [when: key == ''] → wizard chain → publish (fresh only)
+  └── repair_publish_*  [when: key != ''] → re-publish existing values (repair only)
+```
+
+On a fresh install, `check_existing_key` returns empty. The wizard chain runs and the original publish steps write the values. The repair branch `when:` evaluates to false and its steps are skipped.
+
+On repair (key already exists), `check_existing_key` returns the existing value. The `wait_for_wizard` step evaluates its `when:` as false and is skipped, cascading the skip through the entire wizard and auth chain. The repair branch `when:` evaluates to true and re-publishes the existing values, bumping `capability_version` to notify consumers.
+
+See the [Repair-safe hooks](#repair-safe-hooks) design pattern for the full working example.
 
 ---
 
@@ -1629,6 +1690,185 @@ Config field values for storage paths are available as `<<inputs.<field_id>>>`. 
 ```
 
 Where `/host-compose` is the container-side mount of the compose base directory. The actual host path is resolved by the ECB pipeline; hooks reference the container-side view.
+
+### Repair-safe hooks
+
+A repair-safe hook runs correctly whether it is being invoked for the first time or against an already-configured app. The pattern has two parts:
+
+**1. An existence check at the top.** Read the primary capability your hook publishes into a context variable. Use `on_error: continue` so that the step succeeds even when the key does not yet exist (fresh install), binding an empty string.
+
+**2. Two parallel paths in the DAG.** The expensive first-run path (wizard, initial setup, HTTP calls to configure a just-started app) is guarded by `when: "registry.<key> == ''"`. It cascades through its entire dependency chain and skips on repair. A lightweight repair path consists of simple `registry_write` steps that re-publish the existing values, guarded by `when: "registry.<key> != ''"`.
+
+```yaml
+steps:
+  # -------------------------------------------------------
+  # Step 0: Existence check (always runs, no depends_on)
+  # -------------------------------------------------------
+  - id: check_existing_api_key
+    type: registry_read
+    key: myapp.api_key
+    bind_as: existing_api_key
+    on_error: continue          # returns "" if key not yet published
+    critical: false
+    timeout_seconds: 10
+
+  # -------------------------------------------------------
+  # Fresh install path — only runs when key is absent
+  # All steps in this chain depend on wait_for_wizard, so
+  # they cascade-skip automatically on repair.
+  # -------------------------------------------------------
+  - id: wait_for_wizard
+    type: wait_for_http
+    when: "registry.existing_api_key == ''"
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Startup/User"
+    method: GET
+    poll_interval_seconds: 5
+    timeout_seconds: 300
+    on_error: fail
+    critical: true
+    depends_on:
+      - check_existing_api_key
+
+  - id: wizard_create_user
+    type: http_request
+    method: POST
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Startup/User"
+    headers:
+      Content-Type: application/json
+    body_template: '{"Name":"<<inputs.admin_username>>","Password":"<<inputs.admin_password>>"}'
+    on_error: fail
+    critical: true
+    timeout_seconds: 30
+    depends_on:
+      - wait_for_wizard     # cascade-skipped on repair
+
+  - id: wizard_complete
+    type: http_request
+    method: POST
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Startup/Complete"
+    on_error: fail
+    critical: true
+    timeout_seconds: 30
+    depends_on:
+      - wizard_create_user  # cascade-skipped on repair
+
+  - id: wait_for_api
+    type: wait_for_http
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/System/Info/Public"
+    method: GET
+    poll_interval_seconds: 5
+    timeout_seconds: 120
+    on_error: fail
+    critical: true
+    depends_on:
+      - wizard_complete     # cascade-skipped on repair
+
+  - id: authenticate
+    type: http_request
+    method: POST
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Users/AuthenticateByName"
+    body_template: '{"Username":"<<inputs.admin_username>>","Pw":"<<inputs.admin_password>>"}'
+    bind_response_json:
+      bind_as: session_token
+      path: "AccessToken"
+    on_error: fail
+    critical: true
+    timeout_seconds: 30
+    depends_on:
+      - wait_for_api        # cascade-skipped on repair
+
+  - id: fetch_api_key
+    type: http_request
+    method: GET
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Auth/Keys"
+    bind_response_json:
+      bind_as: myapp_api_key
+      path: "Items.0.AccessToken"
+    on_error: fail
+    critical: true
+    timeout_seconds: 30
+    depends_on:
+      - authenticate        # cascade-skipped on repair
+
+  # --- Publish (fresh install path) ---
+  # These depend on fetch_api_key, so they also cascade-skip on repair.
+
+  - id: publish_api_key
+    type: registry_write
+    key: myapp.api_key
+    value_template: "<<registry.myapp_api_key>>"
+    on_error: fail
+    critical: true
+    timeout_seconds: 10
+    depends_on:
+      - fetch_api_key
+
+  - id: publish_url_internal
+    type: registry_write
+    key: myapp.url_internal
+    value_template: "myapp:8096"
+    on_error: fail
+    critical: true
+    timeout_seconds: 10
+    depends_on:
+      - publish_api_key
+
+  - id: publish_url_external
+    type: registry_write
+    key: myapp.url_external
+    value_template: "host.docker.internal:<<inputs.web_ui_port>>"
+    on_error: fail
+    critical: true
+    timeout_seconds: 10
+    depends_on:
+      - publish_url_internal
+
+  # -------------------------------------------------------
+  # Repair path — only runs when key already exists
+  # Re-publishes existing values; bumps capability_version
+  # so consumers re-reconcile automatically.
+  # -------------------------------------------------------
+  - id: repair_publish_api_key
+    type: registry_write
+    key: myapp.api_key
+    value_template: "<<registry.existing_api_key>>"
+    when: "registry.existing_api_key != ''"
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    depends_on:
+      - check_existing_api_key  # only dependency — does not touch the wizard chain
+
+  - id: repair_publish_url_internal
+    type: registry_write
+    key: myapp.url_internal
+    value_template: "myapp:8096"
+    when: "registry.existing_api_key != ''"
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    depends_on:
+      - repair_publish_api_key
+
+  - id: repair_publish_url_external
+    type: registry_write
+    key: myapp.url_external
+    value_template: "host.docker.internal:<<inputs.web_ui_port>>"
+    when: "registry.existing_api_key != ''"
+    on_error: continue
+    critical: false
+    timeout_seconds: 10
+    depends_on:
+      - repair_publish_url_internal
+```
+
+**Why the repair path re-publishes even though nothing changed.** Bumping `capability_version` on repair is intentional. When a user triggers a repair, it is often because an integration with a consumer (Radarr, Sonarr) is broken. Re-publishing the capability fires a `capability_changed` event for those consumers, causing their `post_install` hooks to re-run and re-establish their connections. The repair of the provider automatically triggers repair of all downstream consumers.
+
+**Consumer apps don't need a repair branch.** The idempotent registration pattern (`when: "registry.prowlarr_api_key != '' and registry.existing_prowlarr_app_id == ''"`) already handles repair correctly. On repair, if the app is already registered, the `existing_prowlarr_app_id` check skips re-registration. If the registration was never completed (partial failure), the empty `existing_prowlarr_app_id` allows it to proceed. The existing pattern covers both cases without a separate repair branch.
+
+**The one scenario this does not cover.** If the first-run wizard completed successfully but the `publish_api_key` step failed before writing to the registry, the existence check returns empty, and the hook will attempt to re-run the wizard against an already-sealed app — which will fail. This edge case requires a reinstall. Design your hook so that `publish_api_key` is as close to the end of the chain as possible to minimize the window where this failure mode can occur.
+
+---
 
 ### Versioning your template
 
