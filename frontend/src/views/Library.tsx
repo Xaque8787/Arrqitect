@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Package, RefreshCw, CircleCheck as CheckCircle, CircleAlert as AlertCircle, X, Plus, ChevronRight, ChevronLeft, Zap } from "lucide-react";
-import { api, resolveHostPath, fieldPlaceholder } from "../api";
+import { api, resolveHostPath, resolveMediaPath, fieldPlaceholder } from "../api";
 import { useQueue } from "../QueueContext";
 import type { AppTemplate, ConfigField, SyncResult, CustomEnvEntry, CustomStorageEntry, ActionsSchema, ActionDef, ActionVariantDef, ActionFieldDef } from "../api";
 
@@ -224,16 +224,22 @@ function ActionsStep({ actionsSchema, queued, onChange }: { actionsSchema: Actio
   );
 }
 
-function StageModal({ template, actionsSchema, composeBase, existingStagedId, existingConfig, existingActions, onClose, onStaged, onInstalled }: {
-  template: AppTemplate; actionsSchema: ActionsSchema | null; composeBase: string | null;
+function StageModal({ template, actionsSchema, composeBase, mediaBase, existingStagedId, existingConfig, existingActions, onClose, onStaged, onInstalled }: {
+  template: AppTemplate; actionsSchema: ActionsSchema | null; composeBase: string | null; mediaBase: string | null;
   existingStagedId: string | null; existingConfig: Record<string, string> | null; existingActions: QueuedAction[] | null;
   onClose: () => void; onStaged: () => void; onInstalled: (jobId: string) => void;
 }) {
   const [step, setStep] = useState<"config" | "actions">("config");
   const [name, setName] = useState(template.name);
-  const [config, setConfig] = useState<Record<string, string>>(() =>
-    existingConfig ?? Object.fromEntries(template.config_schema.map(f => [f.id, f.default != null ? String(f.default) : ""]))
-  );
+  const [config, setConfig] = useState<Record<string, string>>(() => {
+    if (existingConfig) return existingConfig;
+    return Object.fromEntries(template.config_schema.map(f => {
+      if (f.source === "platform_path" && f.platform_key && mediaBase) {
+        return [f.id, resolveMediaPath(f.platform_key, mediaBase)];
+      }
+      return [f.id, f.default != null ? String(f.default) : ""];
+    }));
+  });
   const [customEnv, setCustomEnv] = useState<CustomEnvEntry[]>([]);
   const [customStorage, setCustomStorage] = useState<CustomStorageEntry[]>([]);
   const [queuedActions, setQueuedActions] = useState<QueuedAction[]>(() => {
@@ -449,15 +455,17 @@ export default function Library() {
   const [stagingExistingActions, setStagingExistingActions] = useState<QueuedAction[] | null>(null);
   const [loadingStage, setLoadingStage] = useState<string | null>(null);
   const [composeBase, setComposeBase] = useState<string | null>(null);
+  const [mediaBase, setMediaBase] = useState<string | null>(null);
   const { queue, refresh: refreshQueue } = useQueue();
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([api.templates.list(), api.apps.list(), api.settings.composeBase()])
-      .then(([tmpls, apps, base]) => {
+    Promise.all([api.templates.list(), api.apps.list(), api.settings.composeBase(), api.settings.mediaBase()])
+      .then(([tmpls, apps, base, mbase]) => {
         setTemplates(tmpls);
         setInstalledSlugs(new Set(apps.filter(a => a.state !== "staged").map(a => a.slug)));
         if (base.host_path) setComposeBase(base.host_path);
+        if (mbase.host_path) setMediaBase(mbase.host_path);
       }).finally(() => setLoading(false));
   }, []);
 
@@ -555,7 +563,7 @@ export default function Library() {
 
       {staging && (
         <StageModal
-          template={staging} actionsSchema={stagingActions} composeBase={composeBase}
+          template={staging} actionsSchema={stagingActions} composeBase={composeBase} mediaBase={mediaBase}
           existingStagedId={stagingExistingId} existingConfig={stagingExistingConfig} existingActions={stagingExistingActions}
           onClose={() => { setStaging(null); setStagingActions(null); }}
           onStaged={() => { setStaging(null); setStagingActions(null); refreshQueue(); }}

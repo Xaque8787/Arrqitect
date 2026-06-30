@@ -1,9 +1,8 @@
-import json
-import subprocess
 from fastapi import APIRouter
 from pydantic import BaseModel
 from app.db.client import get_db
 from app.services.template_sync import DEFAULT_REPO_URL
+from app.services.ecb.resolver import get_compose_base, get_media_base, CONTAINER_COMPOSE_DIR, CONTAINER_MEDIA_DIR
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -50,31 +49,24 @@ async def update_settings(req: SettingsUpdate):
 
 
 @router.get("/compose-base")
-async def get_compose_base():
+async def get_compose_base_route():
     """
-    Derive the host-side path that maps to /compose inside the arrqitect container
-    by running docker inspect on the container named 'arrqitect'.
-    Returns the absolute host path so the UI can resolve relative paths live.
+    Returns the host-side path mapped to /compose in the arrqitect container.
+    The UI uses this to resolve relative storage paths live.
     """
-    try:
-        result = subprocess.run(
-            ["docker", "inspect", "--format", "{{json .Mounts}}", "arrqitect"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode != 0:
-            return {"host_path": None, "error": result.stderr.strip() or "docker inspect failed"}
-
-        mounts = json.loads(result.stdout)
-        compose_mount = next(
-            (m for m in mounts if m.get("Destination") == "/compose"),
-            None,
-        )
-        if compose_mount:
-            return {"host_path": compose_mount.get("Source"), "error": None}
-
+    path = get_compose_base()
+    if path == CONTAINER_COMPOSE_DIR:
         return {"host_path": None, "error": "No /compose bind mount found on arrqitect container"}
+    return {"host_path": path, "error": None}
 
-    except FileNotFoundError:
-        return {"host_path": None, "error": "docker not found — is the socket mounted?"}
-    except Exception as exc:
-        return {"host_path": None, "error": str(exc)}
+
+@router.get("/media-base")
+async def get_media_base_route():
+    """
+    Returns the host-side path mapped to /media in the arrqitect container.
+    The UI uses this to pre-populate platform_path config fields.
+    """
+    path = get_media_base()
+    if path == CONTAINER_MEDIA_DIR:
+        return {"host_path": None, "error": "No /media bind mount found on arrqitect container"}
+    return {"host_path": path, "error": None}

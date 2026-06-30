@@ -21,7 +21,8 @@ export interface ConfigField {
   binds_to: string;
   required: boolean;
   visibility: "visible" | "advanced" | "hidden";
-  source: "user" | "platform" | "derived";
+  source: "user" | "platform" | "platform_path" | "derived";
+  platform_key?: string | null;
   allowed_values?: string[] | null;
   ui_widget?: "input" | "select";
   editable?: boolean;
@@ -385,6 +386,7 @@ export const api = {
         body: JSON.stringify({ settings }),
       }),
     composeBase: () => req<ComposeBase>("/api/settings/compose-base"),
+    mediaBase: () => req<ComposeBase>("/api/settings/media-base"),
   },
 };
 
@@ -407,4 +409,12 @@ export function resolveHostPath(hostPath: string, appSlug: string, composeBase: 
   if (hostPath.startsWith("/")) return hostPath;
   const stripped = hostPath.replace(/^\.\//, "");
   return `${composeBase.replace(/\/$/, "")}/${appSlug}/${stripped}`;
+}
+
+/** Resolve a platform_key of the form 'media_dir' or 'media_dir/<subpath>' to a host path. */
+export function resolveMediaPath(platformKey: string, mediaBase: string): string {
+  const base = mediaBase.replace(/\/$/, "");
+  if (platformKey === "media_dir") return base;
+  if (platformKey.startsWith("media_dir/")) return `${base}/${platformKey.slice("media_dir/".length)}`;
+  return "";
 }

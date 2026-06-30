@@ -103,13 +103,12 @@ def resolve_config(template: TemplateModel, user_config: dict) -> dict[str, str]
     resolved: dict[str, str] = {}
     for field in template.config_schema:
         raw = user_config.get(field.id)
-        if raw is None:
-            if field.source == "platform_path" and field.platform_key:
-                if media_base is None:
-                    media_base = get_media_base()
-                raw = resolve_platform_path(field.platform_key, media_base)
-            else:
-                raw = field.default
+        if not raw and field.source == "platform_path" and field.platform_key:
+            if media_base is None:
+                media_base = get_media_base()
+            raw = resolve_platform_path(field.platform_key, media_base)
+        elif raw is None:
+            raw = field.default
         resolved[field.id] = str(raw) if raw is not None else ""
     return resolved
 
