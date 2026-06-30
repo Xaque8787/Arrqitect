@@ -499,7 +499,54 @@ The `binds_to` field links a config value to a specific attribute of a specific 
 
 - `user` — value entered by the user.
 - `platform` — injected automatically (e.g., a port also needed as an env var).
+- `platform_path` — default resolved from the platform's media directory at compile time. See below.
 - `derived` — computed from other config values (reserved, currently informational).
+
+#### platform_path fields
+
+When `source: platform_path`, the field's default value is not taken from the `default:` key — it is resolved at compile time by inspecting the running Arrqitect container's mounts to find where the user's media directory lives on the host. This means the pre-filled default correctly reflects `/mnt`, `/home/user/media`, or whatever the user configured via `MEDIA_DIR`, without the template author needing to know in advance.
+
+Set `platform_key` to specify which path to resolve:
+
+| platform_key | Resolves to |
+|---|---|
+| `media_dir` | The root of the media directory (`$MEDIA_DIR`) |
+| `media_dir/<subpath>` | `$MEDIA_DIR/<subpath>` — any subpath is accepted |
+
+The user can still override the pre-filled value in the install wizard. `platform_path` is a smarter default, not a lock.
+
+**Standard subdirectories** guaranteed to exist by Arrqitect's entrypoint:
+
+| platform_key | Intended use |
+|---|---|
+| `media_dir` | Whole media tree (e.g., apps needing full rshared access) |
+| `media_dir/movies` | Standard definition movies (Radarr) |
+| `media_dir/4k_movies` | 4K movies (second Radarr instance) |
+| `media_dir/shows` | TV series (Sonarr) |
+| `media_dir/4k_shows` | 4K TV series (second Sonarr instance) |
+| `media_dir/anime` | Anime (Sonarr anime instance) |
+| `media_dir/music` | Music (Lidarr) |
+| `media_dir/downloads/complete` | Completed downloads |
+| `media_dir/downloads/incomplete` | In-progress downloads |
+| `media_dir/cache` | Transcoding or proxy cache |
+| `media_dir/remotes` | rclone mount points |
+
+You are not restricted to this list. Any `media_dir/<path>` is accepted by the resolver — if you need `media_dir/audiobooks`, use it. The table above only documents what Arrqitect guarantees will exist on a default installation.
+
+**Example — Radarr movies mount defaulting to the platform media path**:
+
+```yaml
+- id: movies_path
+  label: Movies Path
+  type: storage_path
+  binds_to: services.radarr.storage.movies.host_path
+  required: true
+  visibility: visible
+  source: platform_path
+  platform_key: media_dir/movies
+```
+
+No `default:` key is needed — the resolver supplies it. The user sees the actual resolved host path pre-filled in the wizard.
 
 #### requires (cross-app preconditions)
 

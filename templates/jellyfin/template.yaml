@@ -3,7 +3,7 @@ schema_version: 2
 app:
   id: jellyfin
   name: Jellyfin
-  version: "1.0.0"
+  version: "1.1.0"
   flavor: linuxserver
   allow_custom_env: true
   allow_custom_storage: true
@@ -32,21 +32,21 @@ services:
     storage:
       - id: config
         persistence: persistent
-        sharing: private
+        propagation: private
         mutability: read-write
         durability: configuration
         container_path: /config
 
       - id: tv
         persistence: persistent
-        propagation: shared
+        propagation: rslave
         mutability: read-only
         durability: user-data
         container_path: /data/tvshows
 
       - id: movies
         persistence: persistent
-        propagation: shared
+        propagation: rslave
         mutability: read-only
         durability: user-data
         container_path: /data/movies
@@ -112,28 +112,59 @@ config_schema:
   - id: tv_path
     label: TV Shows Path
     type: storage_path
-    default: /media/tvshows
     binds_to: services.jellyfin.storage.tv.host_path
     required: true
     visibility: visible
-    source: user
+    source: platform_path
+    platform_key: media_dir/shows
     placeholder: "Host path to your TV show library"
 
   - id: movies_path
     label: Movies Path
     type: storage_path
-    default: /media/movies
     binds_to: services.jellyfin.storage.movies.host_path
     required: true
     visibility: visible
-    source: user
+    source: platform_path
+    platform_key: media_dir/movies
     placeholder: "Host path to your movie library"
+
+  - id: tv_propagation
+    label: TV Shows Mount Propagation
+    type: string
+    default: rslave
+    binds_to: services.jellyfin.storage.tv.propagation
+    required: false
+    visibility: advanced
+    source: user
+    ui_widget: select
+    allowed_values:
+      - private
+      - shared
+      - rshared
+      - slave
+      - rslave
+
+  - id: movies_propagation
+    label: Movies Mount Propagation
+    type: string
+    default: rslave
+    binds_to: services.jellyfin.storage.movies.propagation
+    required: false
+    visibility: advanced
+    source: user
+    ui_widget: select
+    allowed_values:
+      - private
+      - shared
+      - rshared
+      - slave
+      - rslave
 
   - id: admin_username
     label: Admin Username
     type: string
     default: ""
-    binds_to: null
     required: true
     visibility: visible
     source: user
@@ -143,7 +174,6 @@ config_schema:
     label: Admin Password
     type: string
     default: ""
-    binds_to: null
     required: true
     visibility: visible
     source: user

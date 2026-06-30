@@ -133,7 +133,8 @@ class ConfigField(BaseModel):
     binds_to: str | None = None
     required: bool = False
     visibility: Literal["visible", "advanced", "hidden"] = "visible"
-    source: Literal["user", "platform", "derived"] = "user"
+    source: Literal["user", "platform", "platform_path", "derived"] = "user"
+    platform_key: str | None = None
     allowed_values: list[str] | None = None
     ui_widget: Literal["input", "select"] = "input"
     editable: bool = True

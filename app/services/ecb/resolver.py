@@ -16,6 +16,7 @@ from app.models.template import TemplateModel, ServiceModel, StorageModel, Confi
 from app.models.ir import StorageMountIR, MountPropagationIR, PortIR, EnvVarIR, LifecycleIR, HealthcheckIR
 
 CONTAINER_COMPOSE_DIR = "/compose"
+CONTAINER_MEDIA_DIR = "/media"
 
 # Template layer → IR intent. Docker terms never appear here.
 _PROPAGATION_INTENT = {
@@ -33,25 +34,52 @@ GLOBAL_ENV_MAP = {
 }
 
 
-def get_compose_base() -> str:
-    env_override = os.environ.get("HOST_COMPOSE_DIR", "")
-    if env_override:
-        return env_override
+def _inspect_arrqitect_mounts() -> list[dict]:
     try:
         result = subprocess.run(
             ["docker", "inspect", "--format", "{{json .Mounts}}", "arrqitect"],
             capture_output=True, text=True, timeout=5,
         )
         if result.returncode == 0:
-            mounts = json.loads(result.stdout)
-            mount = next(
-                (m for m in mounts if m.get("Destination") == "/compose"), None
-            )
-            if mount and mount.get("Source"):
-                return mount["Source"]
+            return json.loads(result.stdout)
     except Exception:
         pass
+    return []
+
+
+def get_compose_base() -> str:
+    env_override = os.environ.get("HOST_COMPOSE_DIR", "")
+    if env_override:
+        return env_override
+    mounts = _inspect_arrqitect_mounts()
+    mount = next((m for m in mounts if m.get("Destination") == "/compose"), None)
+    if mount and mount.get("Source"):
+        return mount["Source"]
     return CONTAINER_COMPOSE_DIR
+
+
+def get_media_base() -> str:
+    env_override = os.environ.get("HOST_MEDIA_DIR", "")
+    if env_override:
+        return env_override
+    mounts = _inspect_arrqitect_mounts()
+    mount = next((m for m in mounts if m.get("Destination") == "/media"), None)
+    if mount and mount.get("Source"):
+        return mount["Source"]
+    return CONTAINER_MEDIA_DIR
+
+
+def resolve_platform_path(platform_key: str, media_base: str) -> str:
+    """
+    Resolve a platform_key of the form 'media_dir' or 'media_dir/<subpath>'
+    to an absolute host path.
+    """
+    if platform_key == "media_dir":
+        return media_base
+    if platform_key.startswith("media_dir/"):
+        subpath = platform_key[len("media_dir/"):]
+        return str(Path(media_base) / subpath)
+    return ""
 
 
 def resolve_host_path(raw_path: str, app_slug: str, compose_base: str) -> str:
@@ -67,13 +95,21 @@ def resolve_host_path(raw_path: str, app_slug: str, compose_base: str) -> str:
 def resolve_config(template: TemplateModel, user_config: dict) -> dict[str, str]:
     """
     Merge user-supplied config with schema defaults.
+    For fields with source: platform_path, the default is resolved from the
+    platform's media base path rather than taken literally from the template.
     Returns a flat dict of config_field_id -> resolved string value.
     """
+    media_base: str | None = None
     resolved: dict[str, str] = {}
     for field in template.config_schema:
         raw = user_config.get(field.id)
         if raw is None:
-            raw = field.default
+            if field.source == "platform_path" and field.platform_key:
+                if media_base is None:
+                    media_base = get_media_base()
+                raw = resolve_platform_path(field.platform_key, media_base)
+            else:
+                raw = field.default
         resolved[field.id] = str(raw) if raw is not None else ""
     return resolved
 

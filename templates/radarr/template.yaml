@@ -3,7 +3,7 @@ schema_version: 2
 app:
   id: radarr
   name: Radarr
-  version: "1.5.0"
+  version: "1.6.0"
   flavor: linuxserver
   allow_custom_env: true
   allow_custom_storage: true
@@ -32,12 +32,19 @@ services:
         durability: configuration
         container_path: /config
 
-      - id: media
+      - id: movies
+        persistence: persistent
+        propagation: rslave
+        mutability: read-write
+        durability: user-data
+        container_path: /movies
+
+      - id: downloads
         persistence: persistent
         propagation: rshared
         mutability: read-write
         durability: user-data
-        container_path: /media
+        container_path: /downloads
 
     lifecycle:
       restart:
@@ -91,25 +98,34 @@ config_schema:
     visibility: visible
     source: user
 
-  - id: media_path
-    label: Media Path
+  - id: movies_path
+    label: Movies Path
     type: storage_path
-    default: /media
-    binds_to: services.radarr.storage.media.host_path
+    binds_to: services.radarr.storage.movies.host_path
     required: true
     visibility: visible
-    source: user
+    source: platform_path
+    platform_key: media_dir/movies
     requires:
       - app: prowlarr
         action: yts
-        severity: error
-        message: "Media Path requires the Prowlarr YTS indexer action to be configured"
+        severity: warning
+        message: "Install Prowlarr with the YTS indexer for automatic movie discovery"
 
-  - id: config_propagation
-    label: Config Mount Propagation
+  - id: downloads_path
+    label: Downloads Path
+    type: storage_path
+    binds_to: services.radarr.storage.downloads.host_path
+    required: true
+    visibility: visible
+    source: platform_path
+    platform_key: media_dir/downloads/complete
+
+  - id: movies_propagation
+    label: Movies Mount Propagation
     type: string
-    default: private
-    binds_to: services.radarr.storage.config.propagation
+    default: rslave
+    binds_to: services.radarr.storage.movies.propagation
     required: false
     visibility: advanced
     source: user
@@ -117,6 +133,23 @@ config_schema:
     allowed_values:
       - private
       - shared
+      - rshared
+      - slave
+      - rslave
+
+  - id: downloads_propagation
+    label: Downloads Mount Propagation
+    type: string
+    default: rshared
+    binds_to: services.radarr.storage.downloads.propagation
+    required: false
+    visibility: advanced
+    source: user
+    ui_widget: select
+    allowed_values:
+      - private
+      - shared
+      - rshared
       - slave
       - rslave
 
