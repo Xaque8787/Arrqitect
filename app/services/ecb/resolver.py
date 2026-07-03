@@ -60,7 +60,7 @@ def get_compose_base() -> str:
 
 def get_media_base() -> str:
     env_override = os.environ.get("HOST_MEDIA_DIR", "")
-    if env_override:
+    if env_override and os.path.isabs(env_override):
         return env_override
     mounts = _inspect_arrqitect_mounts()
     mount = next((m for m in mounts if m.get("Destination") == "/media"), None)
