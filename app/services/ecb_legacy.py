@@ -35,7 +35,7 @@ GLOBAL_ENV_MAP = {
 
 def _get_compose_base() -> str:
     env_override = os.environ.get("HOST_COMPOSE_DIR", "")
-    if env_override:
+    if env_override and os.path.isabs(env_override):
         return env_override
 
     try:

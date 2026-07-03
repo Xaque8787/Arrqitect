@@ -49,7 +49,7 @@ def _inspect_arrqitect_mounts() -> list[dict]:
 
 def get_compose_base() -> str:
     env_override = os.environ.get("HOST_COMPOSE_DIR", "")
-    if env_override:
+    if env_override and os.path.isabs(env_override):
         return env_override
     mounts = _inspect_arrqitect_mounts()
     mount = next((m for m in mounts if m.get("Destination") == "/compose"), None)
