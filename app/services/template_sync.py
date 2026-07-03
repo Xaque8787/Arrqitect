@@ -37,7 +37,7 @@ from app.db.client import get_sync_conn
 from app.services.ecb.parser import parse_template, PassthroughTemplate, ParseError
 
 SUPPORTED_SCHEMA_VERSIONS = {1, 2}
-DEFAULT_REPO_URL = "https://raw.githubusercontent.com/Xaque8787/Arrqitect/dev/templates"
+DEFAULT_REPO_URL = "/app/templates"
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 

@@ -1,11 +1,12 @@
 services:
   arrqitect:
-    image: ghcr.io/xaque8787/arrqitect:latest
+    build: .
     container_name: arrqitect
     restart: unless-stopped
     ports:
       - "${ARRQITECT_PORT:-2112}:2112"
     volumes:
+      - ./templates:/app/templates
       - ${COMPOSE_DIR:-./compose}:/compose
       - ${DATA_DIR:-./data}:/data
       - ${MEDIA_DIR:-./media}:/media
