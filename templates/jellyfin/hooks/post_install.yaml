@@ -222,8 +222,12 @@ steps:
   # --- Library creation ---
   # Movies and TV are always created (paths always resolve via platform_key).
   # 4K Movies, 4K TV, and Anime are conditional on the user supplying a path.
-  # Each library POST is followed by a GET to extract the library ID by position,
-  # then a registry_write so downstream hooks or actions can reference it.
+  #
+  # The optional creates are parallel siblings — all depend on create_library_tv,
+  # none depend on each other. fetch_libraries also depends only on create_library_tv.
+  # Kahn's topo sort processes them in YAML order, so the three optional creates
+  # are always processed before fetch_libraries in the same eligibility group.
+  # This means skipping any optional does not cascade-skip the fetch.
 
   - id: create_library_movies
     type: http_request
@@ -284,7 +288,7 @@ steps:
     critical: true
     timeout_seconds: 30
     depends_on:
-      - create_library_movies4k
+      - create_library_tv
     description: Create the 4K TV Shows library. Skipped when tv4k_path is blank.
 
   - id: create_library_anime
@@ -300,12 +304,11 @@ steps:
     critical: true
     timeout_seconds: 30
     depends_on:
-      - create_library_tv4k
+      - create_library_tv
     description: Create the Anime library. Skipped when anime_path is blank.
 
-  # Fetch the full library list once after all creates, then extract IDs by position.
-  # Movies is always position 0, TV is always position 1 — these are the first two
-  # libraries created on a fresh wizard-sealed instance with zero prior libraries.
+  # fetch_libraries also depends only on create_library_tv, not on the optional creates.
+  # It runs after the optional siblings because of YAML-insertion topo ordering.
 
   - id: fetch_libraries
     type: http_request
@@ -320,7 +323,7 @@ steps:
     critical: true
     timeout_seconds: 30
     depends_on:
-      - create_library_anime
+      - create_library_tv
     description: Fetch the library list and extract the Movies library ID from position 0.
 
   - id: fetch_tv_library_id
