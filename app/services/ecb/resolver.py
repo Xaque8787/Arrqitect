@@ -129,16 +129,20 @@ def resolve_storage(
     for storage in service.storage:
         dotpath_prefix = f"services.{service.id}.storage.{storage.id}"
 
-        # host_path: ConfigField binding → compose_base fallback
-        host_path = _find_bound_value(
+        # host_path: ConfigField binding → compose_base fallback.
+        # If a config field is bound and resolves to empty, the mount is omitted —
+        # this is how optional library paths work (user left the field blank).
+        bound_host_path = _find_bound_value(
             dotpath_prefix + ".host_path",
             config_schema,
             resolved_config,
         )
-        if host_path is None:
+        if bound_host_path is None:
             host_path = str(Path(compose_base) / app_slug / storage.id)
+        elif bound_host_path == "":
+            continue
         else:
-            host_path = resolve_host_path(host_path, app_slug, compose_base)
+            host_path = resolve_host_path(bound_host_path, app_slug, compose_base)
 
         # propagation: ConfigField override → template default → safe fallback ("none")
         prop_override = _find_bound_value(
