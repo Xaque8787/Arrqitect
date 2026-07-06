@@ -26,6 +26,7 @@ steps:
     bind_as: existing_api_key
     on_error: continue
     critical: false
+    silent: true
     timeout_seconds: 10
     description: >
       Read any previously published API key. Non-empty means Jellyfin was

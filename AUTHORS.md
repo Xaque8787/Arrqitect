@@ -921,6 +921,7 @@ These fields apply to all step types:
 | `when` | string | (always run) | Conditional expression. Step is skipped if false. |
 | `on_error` | string | `fail` | `fail` (block hook) or `continue` (degrade gracefully). |
 | `critical` | bool | `true` | Whether this step's failure affects overall job status. Mainly relevant with `on_error: continue`. |
+| `silent` | bool | `false` | When `true`, a `CONTINUE_SUCCESS` result from this step does not set the job status to DEGRADED. Use only on idempotency-guard steps where "not found" is the expected outcome on a fresh install. |
 | `timeout_seconds` | int | 30 | Maximum step execution time. |
 
 ---
@@ -1311,6 +1312,27 @@ The hook validator runs at template sync time and at job dispatch time. Violatio
 - `compose_command` steps with no `when:` guard and no explicit `critical: true`.
 - Steps using `on_error: continue` with no explicit `critical` flag.
 - Steps depending on a conditionally-skippable dependency (the downstream step may never run).
+
+### silent: true — suppressing expected CONTINUE_SUCCESS
+
+By default, any step that reaches `CONTINUE_SUCCESS` (i.e., it failed but `on_error: continue` allowed the hook to proceed) marks the job as DEGRADED. This is the correct signal for integration steps like `register_with_prowlarr` where a soft failure means something was not fully set up.
+
+However, **idempotency-guard steps** (`registry_read` steps at the top of repair-safe hooks that probe for an already-existing key) are expected to return empty on a fresh install. Their `CONTINUE_SUCCESS` does not indicate anything went wrong — the key simply doesn't exist yet.
+
+Add `silent: true` to these guard steps to prevent a clean fresh install from being incorrectly classified as DEGRADED:
+
+```yaml
+- id: check_existing_api_key
+  type: registry_read
+  key: myapp.api_key
+  bind_as: existing_api_key
+  on_error: continue
+  critical: false
+  silent: true          # CONTINUE_SUCCESS here is expected on first install
+  timeout_seconds: 10
+```
+
+Do **not** use `silent: true` on integration steps (`register_with_prowlarr`, `read_prowlarr_api_key`, etc.) — those use `CONTINUE_SUCCESS` to correctly signal that the integration was skipped due to a missing provider, and DEGRADED is the right outcome.
 
 ### Info-level rules (advisory only)
 
@@ -1757,6 +1779,7 @@ steps:
     bind_as: existing_api_key
     on_error: continue          # returns "" if key not yet published
     critical: false
+    silent: true                # key absent on fresh install is expected — do not degrade
     timeout_seconds: 10
 
   # -------------------------------------------------------

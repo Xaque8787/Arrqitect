@@ -141,6 +141,7 @@ class _StepDef:
     depends_on: list[str]
     on_error: str          # "fail" | "continue"
     critical: bool
+    silent: bool           # if True, CONTINUE_SUCCESS does not set has_degraded
     timeout_seconds: int | None
     params: dict           # type-specific params
 
@@ -291,7 +292,8 @@ async def execute_hook(
         await _record_step(ctx.job_id, step_id, step_status, log, broadcast)
 
         if step_status == StepStatus.CONTINUE_SUCCESS:
-            has_degraded = True
+            if not step.silent:
+                has_degraded = True
         elif step_status == StepStatus.FAILED:
             if step.on_error == "continue":
                 blocking_failure = True
@@ -717,9 +719,10 @@ def _parse_step_defs(raw_steps: list) -> list[_StepDef] | str:
             depends_on=list(depends_on),
             on_error=raw.get("on_error", "fail"),
             critical=bool(raw.get("critical", False)),
+            silent=bool(raw.get("silent", False)),
             timeout_seconds=raw.get("timeout_seconds"),
             params={k: v for k, v in raw.items()
-                    if k not in ("id", "type", "when", "depends_on", "on_error", "critical", "timeout_seconds")},
+                    if k not in ("id", "type", "when", "depends_on", "on_error", "critical", "silent", "timeout_seconds")},
         ))
 
     all_ids = {s.id for s in steps}
