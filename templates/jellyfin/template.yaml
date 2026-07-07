@@ -51,6 +51,27 @@ services:
         durability: user-data
         container_path: /data/movies
 
+      - id: movies4k
+        persistence: persistent
+        propagation: rslave
+        mutability: read-only
+        durability: user-data
+        container_path: /data/movies4k
+
+      - id: tv4k
+        persistence: persistent
+        propagation: rslave
+        mutability: read-only
+        durability: user-data
+        container_path: /data/tv4k
+
+      - id: anime
+        persistence: persistent
+        propagation: rslave
+        mutability: read-only
+        durability: user-data
+        container_path: /data/anime
+
     lifecycle:
       restart:
         behavior: persistent
@@ -77,6 +98,16 @@ provides:
   - key: jellyfin.api_key
     type: credential
     sensitive: true
+    rotates: false
+
+  - key: jellyfin.movies_library_id
+    type: metadata
+    sensitive: false
+    rotates: false
+
+  - key: jellyfin.tv_library_id
+    type: metadata
+    sensitive: false
     rotates: false
 
 consumes: []
@@ -160,6 +191,33 @@ config_schema:
       - rshared
       - slave
       - rslave
+
+  - id: movies4k_path
+    label: 4K Movies Path
+    type: storage_path
+    binds_to: services.jellyfin.storage.movies4k.host_path
+    required: false
+    visibility: visible
+    source: user
+    placeholder: "Host path to your 4K movie library (leave blank to skip)"
+
+  - id: tv4k_path
+    label: 4K TV Shows Path
+    type: storage_path
+    binds_to: services.jellyfin.storage.tv4k.host_path
+    required: false
+    visibility: visible
+    source: user
+    placeholder: "Host path to your 4K TV show library (leave blank to skip)"
+
+  - id: anime_path
+    label: Anime Path
+    type: storage_path
+    binds_to: services.jellyfin.storage.anime.host_path
+    required: false
+    visibility: visible
+    source: user
+    placeholder: "Host path to your anime library (leave blank to skip)"
 
   - id: admin_username
     label: Admin Username

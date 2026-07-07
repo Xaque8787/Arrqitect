@@ -15,6 +15,7 @@ services:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
       - HOST_COMPOSE_DIR=${HOST_COMPOSE_DIR}
+      - HOST_MEDIA_DIR=${HOST_MEDIA_DIR}
       - DB_PATH=/data/arrqitect.db
     extra_hosts:
       - "host.docker.internal:host-gateway"
