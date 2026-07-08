@@ -159,9 +159,27 @@ steps:
       - register_with_prowlarr
     description: Persist the registration ID for use in pre_remove.
 
+  - id: trigger_sync
+    type: http_request
+    method: POST
+    url_template: "http://<<registry.prowlarr_url_external>>/api/v1/command"
+    headers:
+      Content-Type: "application/json"
+      X-Api-Key: "<<registry.prowlarr_api_key>>"
+    body_template: '{"name":"ApplicationIndexerSync"}'
+    when: "registry.radarr_prowlarr_app_id != ''"
+    on_error: continue
+    critical: false
+    timeout_seconds: 30
+    depends_on:
+      - store_app_id
+    description: >
+      Force Prowlarr to push all existing indexers to all registered apps,
+      including the newly registered Radarr instance.
+
   - id: log_complete
     type: log
     message: "Radarr post-install: own capabilities published and Prowlarr registration complete"
     depends_on:
-      - store_app_id
+      - trigger_sync
     timeout_seconds: 5
