@@ -167,15 +167,17 @@ steps:
       Content-Type: "application/json"
       X-Api-Key: "<<registry.prowlarr_api_key>>"
     body_template: '{"name":"ApplicationIndexerSync"}'
-    when: "registry.radarr_prowlarr_app_id != ''"
+    when: "registry.prowlarr_api_key != '' and (registry.existing_prowlarr_app_id != '' or registry.radarr_prowlarr_app_id != '')"
     on_error: continue
     critical: false
     timeout_seconds: 30
     depends_on:
-      - store_app_id
+      - read_prowlarr_url_external
     description: >
-      Force Prowlarr to push all existing indexers to all registered apps,
-      including the newly registered Radarr instance.
+      Force Prowlarr to push all existing indexers to all registered apps.
+      Fires whether this is a fresh registration or a reconcile of an already-
+      registered instance, so indexers always reach Radarr regardless of the
+      order hooks run in a bulk install.
 
   - id: log_complete
     type: log
