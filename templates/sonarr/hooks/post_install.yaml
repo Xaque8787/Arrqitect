@@ -165,7 +165,7 @@ steps:
       Content-Type: "application/json"
       X-Api-Key: "<<registry.prowlarr_api_key>>"
     body_template: '{"name":"ApplicationIndexerSync"}'
-    when: "registry.prowlarr_api_key != '' and (registry.existing_prowlarr_app_id != '' or registry.sonarr_prowlarr_app_id != '')"
+    when: "registry.prowlarr_api_key != ''"
     on_error: continue
     critical: false
     timeout_seconds: 30
