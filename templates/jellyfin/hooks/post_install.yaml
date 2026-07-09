@@ -221,37 +221,91 @@ steps:
     description: Publish the host-accessible URL for hook executor HTTP calls.
 
   # --- Library creation ---
-  # Movies and TV are always created — both paths live under /media.
+  # All five are conditional on the corresponding input being non-empty.
+  # movies_path and tv_path are pre-populated defaults but can be cleared.
+  # All five are parallel siblings — none depends on another.
+  # fetch_libraries depends on all five so it always waits for the batch to
+  # complete, but a skipped sibling does not cascade-skip the fetch.
 
   - id: create_library_movies
     type: http_request
+    when: "inputs.movies_path != ''"
     method: POST
     url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Library/VirtualFolders?collectionType=movies&name=Movies&refreshLibrary=false"
     headers:
       Content-Type: "application/json"
       X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
-    body_template: '{"Paths":["/media/movies"]}'
+    body_template: '{"Paths":["<<inputs.movies_path>>"]}'
     on_error: fail
     critical: true
     timeout_seconds: 30
     depends_on:
       - publish_url_external
-    description: Create the Movies library pointing at /media/movies.
+    description: Create the Movies library. Skipped when movies_path is blank.
 
   - id: create_library_tv
     type: http_request
+    when: "inputs.tv_path != ''"
     method: POST
     url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Library/VirtualFolders?collectionType=tvshows&name=TV+Shows&refreshLibrary=false"
     headers:
       Content-Type: "application/json"
       X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
-    body_template: '{"Paths":["/media/shows"]}'
+    body_template: '{"Paths":["<<inputs.tv_path>>"]}'
     on_error: fail
     critical: true
     timeout_seconds: 30
     depends_on:
-      - create_library_movies
-    description: Create the TV Shows library pointing at /media/shows.
+      - publish_url_external
+    description: Create the TV Shows library. Skipped when tv_path is blank.
+
+  - id: create_library_movies4k
+    type: http_request
+    when: "inputs.movies4k_path != ''"
+    method: POST
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Library/VirtualFolders?collectionType=movies&name=4K+Movies&refreshLibrary=false"
+    headers:
+      Content-Type: "application/json"
+      X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
+    body_template: '{"Paths":["<<inputs.movies4k_path>>"]}'
+    on_error: fail
+    critical: true
+    timeout_seconds: 30
+    depends_on:
+      - publish_url_external
+    description: Create the 4K Movies library. Skipped when movies4k_path is blank.
+
+  - id: create_library_tv4k
+    type: http_request
+    when: "inputs.tv4k_path != ''"
+    method: POST
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Library/VirtualFolders?collectionType=tvshows&name=4K+TV+Shows&refreshLibrary=false"
+    headers:
+      Content-Type: "application/json"
+      X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
+    body_template: '{"Paths":["<<inputs.tv4k_path>>"]}'
+    on_error: fail
+    critical: true
+    timeout_seconds: 30
+    depends_on:
+      - publish_url_external
+    description: Create the 4K TV Shows library. Skipped when tv4k_path is blank.
+
+  - id: create_library_anime
+    type: http_request
+    when: "inputs.anime_path != ''"
+    method: POST
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/Library/VirtualFolders?collectionType=tvshows&name=Anime&refreshLibrary=false"
+    headers:
+      Content-Type: "application/json"
+      X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
+    body_template: '{"Paths":["<<inputs.anime_path>>"]}'
+    on_error: fail
+    critical: true
+    timeout_seconds: 30
+    depends_on:
+      - publish_url_external
+    description: Create the Anime library. Skipped when anime_path is blank.
 
   - id: fetch_libraries
     type: http_request
@@ -262,11 +316,15 @@ steps:
     bind_response_json:
       bind_as: jellyfin_movies_library_id
       path: "0.ItemId"
-    on_error: fail
-    critical: true
+    on_error: continue
+    critical: false
     timeout_seconds: 30
     depends_on:
+      - create_library_movies
       - create_library_tv
+      - create_library_movies4k
+      - create_library_tv4k
+      - create_library_anime
     description: Fetch the library list and extract the Movies library ID from position 0.
 
   - id: fetch_tv_library_id

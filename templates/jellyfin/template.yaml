@@ -3,7 +3,7 @@ schema_version: 2
 app:
   id: jellyfin
   name: Jellyfin
-  version: "1.2.0"
+  version: "1.1.0"
   flavor: linuxserver
   allow_custom_env: true
   allow_custom_storage: true
@@ -137,6 +137,48 @@ config_schema:
       - rshared
       - slave
       - rslave
+
+  - id: movies_path
+    label: Movies Library Path
+    type: string
+    default: /media/movies
+    required: false
+    visibility: visible
+    source: user
+    placeholder: "Container path for your movie library (leave blank to skip)"
+
+  - id: tv_path
+    label: TV Shows Library Path
+    type: string
+    default: /media/shows
+    required: false
+    visibility: visible
+    source: user
+    placeholder: "Container path for your TV library (leave blank to skip)"
+
+  - id: movies4k_path
+    label: 4K Movies Library Path
+    type: string
+    required: false
+    visibility: visible
+    source: user
+    placeholder: "Container path for your 4K movie library (leave blank to skip)"
+
+  - id: tv4k_path
+    label: 4K TV Shows Library Path
+    type: string
+    required: false
+    visibility: visible
+    source: user
+    placeholder: "Container path for your 4K TV library (leave blank to skip)"
+
+  - id: anime_path
+    label: Anime Library Path
+    type: string
+    required: false
+    visibility: visible
+    source: user
+    placeholder: "Container path for your anime library (leave blank to skip)"
 
   - id: admin_username
     label: Admin Username
