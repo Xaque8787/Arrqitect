@@ -235,7 +235,7 @@ steps:
     headers:
       Content-Type: "application/json"
       X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
-    body_template: '{"Paths":["/media/movies"]}'
+    body_template: '{"LibraryOptions":{"PathInfos":[{"Path":"/media/movies"}]}}'
     on_error: fail
     critical: true
     timeout_seconds: 30
@@ -251,7 +251,7 @@ steps:
     headers:
       Content-Type: "application/json"
       X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
-    body_template: '{"Paths":["/media/shows"]}'
+    body_template: '{"LibraryOptions":{"PathInfos":[{"Path":"/media/shows"}]}}'
     on_error: fail
     critical: true
     timeout_seconds: 30
@@ -267,7 +267,7 @@ steps:
     headers:
       Content-Type: "application/json"
       X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
-    body_template: '{"Paths":["/media/movies4k"]}'
+    body_template: '{"LibraryOptions":{"PathInfos":[{"Path":"/media/movies4k"}]}}'
     on_error: fail
     critical: true
     timeout_seconds: 30
@@ -283,7 +283,7 @@ steps:
     headers:
       Content-Type: "application/json"
       X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
-    body_template: '{"Paths":["/media/tv4k"]}'
+    body_template: '{"LibraryOptions":{"PathInfos":[{"Path":"/media/tv4k"}]}}'
     on_error: fail
     critical: true
     timeout_seconds: 30
@@ -299,7 +299,7 @@ steps:
     headers:
       Content-Type: "application/json"
       X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
-    body_template: '{"Paths":["/media/anime"]}'
+    body_template: '{"LibraryOptions":{"PathInfos":[{"Path":"/media/anime"}]}}'
     on_error: fail
     critical: true
     timeout_seconds: 30
