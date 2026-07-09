@@ -72,6 +72,30 @@ steps:
       Publish Radarr's host-accessible URL. Used by the hook executor
       when it needs to make direct HTTP calls to Radarr's API.
 
+  - id: set_root_folder
+    type: http_request
+    method: POST
+    url_template: "http://<<registry.radarr_url_external>>/api/v3/rootfolder"
+    headers:
+      Content-Type: "application/json"
+      X-Api-Key: "<<registry.radarr_self_api_key>>"
+    body_template: '{"path":"/media/movies"}'
+    idempotency_check:
+      url_template: "http://<<registry.radarr_url_external>>/api/v3/rootfolder"
+      headers:
+        X-Api-Key: "<<registry.radarr_self_api_key>>"
+      match_field: path
+      match_value: "/media/movies"
+    on_error: continue
+    critical: false
+    timeout_seconds: 15
+    depends_on:
+      - publish_self_url_external
+    description: >
+      Set /media/movies as Radarr's root folder. Idempotent — skips if
+      already configured. Uses on_error: continue so a missing directory
+      does not block Prowlarr registration.
+
   # --- Phase 2: register with Prowlarr ---
 
   - id: read_existing_app_id

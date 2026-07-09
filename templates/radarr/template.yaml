@@ -3,7 +3,7 @@ schema_version: 2
 app:
   id: radarr
   name: Radarr
-  version: "1.6.0"
+  version: "1.7.0"
   flavor: linuxserver
   allow_custom_env: true
   allow_custom_storage: true
@@ -32,19 +32,12 @@ services:
         durability: configuration
         container_path: /config
 
-      - id: movies
+      - id: media
         persistence: persistent
         propagation: rslave
         mutability: read-write
         durability: user-data
-        container_path: /movies
-
-      - id: downloads
-        persistence: persistent
-        propagation: rshared
-        mutability: read-write
-        durability: user-data
-        container_path: /downloads
+        container_path: /media
 
     lifecycle:
       restart:
@@ -98,50 +91,25 @@ config_schema:
     visibility: visible
     source: user
 
-  - id: movies_path
-    label: Movies Path
+  - id: media_path
+    label: Media Path
     type: storage_path
-    binds_to: services.radarr.storage.movies.host_path
+    binds_to: services.radarr.storage.media.host_path
     required: true
     visibility: visible
     source: platform_path
-    platform_key: media_dir/movies
+    platform_key: media_dir
     requires:
       - app: prowlarr
         action: yts
         severity: warning
         message: "Install Prowlarr with the YTS indexer for automatic movie discovery"
 
-  - id: downloads_path
-    label: Downloads Path
-    type: storage_path
-    binds_to: services.radarr.storage.downloads.host_path
-    required: true
-    visibility: visible
-    source: platform_path
-    platform_key: media_dir/downloads/complete
-
-  - id: movies_propagation
-    label: Movies Mount Propagation
+  - id: media_propagation
+    label: Media Mount Propagation
     type: string
     default: rslave
-    binds_to: services.radarr.storage.movies.propagation
-    required: false
-    visibility: advanced
-    source: user
-    ui_widget: select
-    allowed_values:
-      - private
-      - shared
-      - rshared
-      - slave
-      - rslave
-
-  - id: downloads_propagation
-    label: Downloads Mount Propagation
-    type: string
-    default: rshared
-    binds_to: services.radarr.storage.downloads.propagation
+    binds_to: services.radarr.storage.media.propagation
     required: false
     visibility: advanced
     source: user

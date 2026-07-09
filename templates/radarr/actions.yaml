@@ -1,0 +1,23 @@
+actions:
+  - id: set_root_folder
+    label: Set Root Folder
+    description: Configure /media/movies as Radarr's root folder
+    method: POST
+    url_template: "http://<<registry.radarr_url_external>>/api/v3/rootfolder"
+    headers:
+      Content-Type: application/json
+      X-Api-Key: "<<registry.radarr_api_key>>"
+    idempotency_check:
+      url_template: "http://<<registry.radarr_url_external>>/api/v3/rootfolder"
+      headers:
+        X-Api-Key: "<<registry.radarr_api_key>>"
+      match_field: path
+      match_value: "/media/movies"
+    variants:
+      - id: default
+        label: /media/movies
+        description: Set root folder to /media/movies
+        idempotency_value: "/media/movies"
+        enabled_by_default: true
+        body_template: '{"path":"/media/movies"}'
+        fields: []
