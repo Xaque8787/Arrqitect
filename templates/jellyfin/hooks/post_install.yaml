@@ -235,13 +235,13 @@ steps:
     headers:
       Content-Type: "application/json"
       X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
-    body_template: '{"Paths":["<<inputs.movies_path>>"]}'
+    body_template: '{"Paths":["/media/movies"]}'
     on_error: fail
     critical: true
     timeout_seconds: 30
     depends_on:
       - publish_url_external
-    description: Create the Movies library. Skipped when movies_path is blank.
+    description: Create the Movies library pointing to /media/movies. Skipped when movies_path is blank.
 
   - id: create_library_tv
     type: http_request
@@ -251,13 +251,13 @@ steps:
     headers:
       Content-Type: "application/json"
       X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
-    body_template: '{"Paths":["<<inputs.tv_path>>"]}'
+    body_template: '{"Paths":["/media/shows"]}'
     on_error: fail
     critical: true
     timeout_seconds: 30
     depends_on:
       - publish_url_external
-    description: Create the TV Shows library. Skipped when tv_path is blank.
+    description: Create the TV Shows library pointing to /media/shows. Skipped when tv_path is blank.
 
   - id: create_library_movies4k
     type: http_request
@@ -267,13 +267,13 @@ steps:
     headers:
       Content-Type: "application/json"
       X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
-    body_template: '{"Paths":["<<inputs.movies4k_path>>"]}'
+    body_template: '{"Paths":["/media/movies4k"]}'
     on_error: fail
     critical: true
     timeout_seconds: 30
     depends_on:
       - publish_url_external
-    description: Create the 4K Movies library. Skipped when movies4k_path is blank.
+    description: Create the 4K Movies library pointing to /media/movies4k. Skipped when movies4k_path is blank.
 
   - id: create_library_tv4k
     type: http_request
@@ -283,13 +283,13 @@ steps:
     headers:
       Content-Type: "application/json"
       X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
-    body_template: '{"Paths":["<<inputs.tv4k_path>>"]}'
+    body_template: '{"Paths":["/media/tv4k"]}'
     on_error: fail
     critical: true
     timeout_seconds: 30
     depends_on:
       - publish_url_external
-    description: Create the 4K TV Shows library. Skipped when tv4k_path is blank.
+    description: Create the 4K TV Shows library pointing to /media/tv4k. Skipped when tv4k_path is blank.
 
   - id: create_library_anime
     type: http_request
@@ -299,13 +299,13 @@ steps:
     headers:
       Content-Type: "application/json"
       X-Emby-Authorization: 'MediaBrowser Client="Arrqitect", Device="Arrqitect", DeviceId="arrqitect-hook", Version="1.0", Token="<<registry.jellyfin_session_token>>"'
-    body_template: '{"Paths":["<<inputs.anime_path>>"]}'
+    body_template: '{"Paths":["/media/anime"]}'
     on_error: fail
     critical: true
     timeout_seconds: 30
     depends_on:
       - publish_url_external
-    description: Create the Anime library. Skipped when anime_path is blank.
+    description: Create the Anime library pointing to /media/anime. Skipped when anime_path is blank.
 
   - id: fetch_libraries
     type: http_request
