@@ -102,7 +102,6 @@ config_schema:
     allowed_values:
       - none
       - forms
-      - basic
 
   - id: auth_username
     label: Admin Username

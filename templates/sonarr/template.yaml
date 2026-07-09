@@ -130,6 +130,40 @@ config_schema:
     visibility: hidden
     source: platform
 
+  - id: auth_type
+    label: Authentication Type
+    type: string
+    default: "none"
+    binds_to: null
+    required: false
+    visibility: visible
+    source: user
+    ui_widget: select
+    allowed_values:
+      - none
+      - forms
+
+  - id: auth_username
+    label: Admin Username
+    type: string
+    default: ""
+    binds_to: null
+    required: false
+    visibility: visible
+    source: user
+    placeholder: "Leave blank if auth type is None"
+
+  - id: auth_password
+    label: Admin Password
+    type: string
+    default: ""
+    binds_to: null
+    required: false
+    visibility: visible
+    source: user
+    sensitive: true
+    placeholder: "Leave blank if auth type is None"
+
 hooks:
   post_install: hooks/post_install.yaml
   pre_remove: hooks/pre_remove.yaml

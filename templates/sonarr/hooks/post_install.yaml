@@ -70,6 +70,39 @@ steps:
       Publish Sonarr's host-accessible URL. Used by the hook executor
       when it needs to make direct HTTP calls to Sonarr's API.
 
+  - id: wait_for_api
+    type: wait_for_http
+    when: "inputs.auth_type != 'none'"
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/api/v3/system/status"
+    headers:
+      X-Api-Key: "<<registry.sonarr_self_api_key>>"
+    poll_interval_seconds: 5
+    timeout_seconds: 120
+    on_error: continue
+    depends_on:
+      - publish_self_url_external
+    description: >
+      Poll Sonarr's status endpoint until its HTTP API is fully ready.
+      Skipped when auth type is None.
+
+  - id: configure_auth
+    type: http_request
+    when: "inputs.auth_type != 'none'"
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/api/v3/config/host"
+    method: PUT
+    headers:
+      Content-Type: application/json
+      X-Api-Key: "<<registry.sonarr_self_api_key>>"
+    body_template: >-
+      {"id":1,"bindAddress":"*","port":<<inputs.web_ui_port>>,"sslPort":9898,"enableSsl":false,"launchBrowser":false,"authenticationMethod":"<<inputs.auth_type>>","authenticationRequired":"disabledForLocalAddresses","username":"<<inputs.auth_username>>","password":"<<inputs.auth_password>>","passwordConfirmation":"<<inputs.auth_password>>","apiKey":"<<registry.sonarr_self_api_key>>","logLevel":"info","analyticsEnabled":false,"branch":"main","updateAutomatically":false,"updateMechanism":"docker","instanceName":"Sonarr","applicationUrl":"","urlBase":""}
+    on_error: continue
+    timeout_seconds: 30
+    depends_on:
+      - wait_for_api
+    description: >
+      Configure Sonarr authentication using the credentials supplied at
+      install time. Skipped when auth type is None.
+
   - id: set_root_folder
     type: http_request
     method: POST
@@ -88,7 +121,7 @@ steps:
     critical: false
     timeout_seconds: 15
     depends_on:
-      - publish_self_url_external
+      - configure_auth
     description: >
       Set /media/shows as Sonarr's root folder. Idempotent — skips if
       already configured. Uses on_error: continue so a missing directory
@@ -104,7 +137,7 @@ steps:
     critical: false
     timeout_seconds: 10
     depends_on:
-      - publish_self_url_external
+      - set_root_folder
     description: >
       Read persisted Prowlarr registration ID. Empty means not yet registered.
       Skips re-registration on reconcile when the ID is already stored.
