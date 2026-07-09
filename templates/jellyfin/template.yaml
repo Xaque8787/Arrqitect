@@ -3,7 +3,7 @@ schema_version: 2
 app:
   id: jellyfin
   name: Jellyfin
-  version: "1.1.0"
+  version: "1.2.0"
   flavor: linuxserver
   allow_custom_env: true
   allow_custom_storage: true
@@ -37,40 +37,12 @@ services:
         durability: configuration
         container_path: /config
 
-      - id: tv
+      - id: media
         persistence: persistent
         propagation: rslave
         mutability: read-only
         durability: user-data
-        container_path: /data/tvshows
-
-      - id: movies
-        persistence: persistent
-        propagation: rslave
-        mutability: read-only
-        durability: user-data
-        container_path: /data/movies
-
-      - id: movies4k
-        persistence: persistent
-        propagation: rslave
-        mutability: read-only
-        durability: user-data
-        container_path: /data/movies4k
-
-      - id: tv4k
-        persistence: persistent
-        propagation: rslave
-        mutability: read-only
-        durability: user-data
-        container_path: /data/tv4k
-
-      - id: anime
-        persistence: persistent
-        propagation: rslave
-        mutability: read-only
-        durability: user-data
-        container_path: /data/anime
+        container_path: /media
 
     lifecycle:
       restart:
@@ -140,31 +112,21 @@ config_schema:
     visibility: visible
     source: user
 
-  - id: tv_path
-    label: TV Shows Path
+  - id: media_path
+    label: Media Path
     type: storage_path
-    binds_to: services.jellyfin.storage.tv.host_path
+    binds_to: services.jellyfin.storage.media.host_path
     required: true
     visibility: visible
     source: platform_path
-    platform_key: media_dir/shows
-    placeholder: "Host path to your TV show library"
+    platform_key: media_dir
+    placeholder: "Host path to your media directory"
 
-  - id: movies_path
-    label: Movies Path
-    type: storage_path
-    binds_to: services.jellyfin.storage.movies.host_path
-    required: true
-    visibility: visible
-    source: platform_path
-    platform_key: media_dir/movies
-    placeholder: "Host path to your movie library"
-
-  - id: tv_propagation
-    label: TV Shows Mount Propagation
+  - id: media_propagation
+    label: Media Mount Propagation
     type: string
     default: rslave
-    binds_to: services.jellyfin.storage.tv.propagation
+    binds_to: services.jellyfin.storage.media.propagation
     required: false
     visibility: advanced
     source: user
@@ -175,49 +137,6 @@ config_schema:
       - rshared
       - slave
       - rslave
-
-  - id: movies_propagation
-    label: Movies Mount Propagation
-    type: string
-    default: rslave
-    binds_to: services.jellyfin.storage.movies.propagation
-    required: false
-    visibility: advanced
-    source: user
-    ui_widget: select
-    allowed_values:
-      - private
-      - shared
-      - rshared
-      - slave
-      - rslave
-
-  - id: movies4k_path
-    label: 4K Movies Path
-    type: storage_path
-    binds_to: services.jellyfin.storage.movies4k.host_path
-    required: false
-    visibility: visible
-    source: user
-    placeholder: "Host path to your 4K movie library (leave blank to skip)"
-
-  - id: tv4k_path
-    label: 4K TV Shows Path
-    type: storage_path
-    binds_to: services.jellyfin.storage.tv4k.host_path
-    required: false
-    visibility: visible
-    source: user
-    placeholder: "Host path to your 4K TV show library (leave blank to skip)"
-
-  - id: anime_path
-    label: Anime Path
-    type: storage_path
-    binds_to: services.jellyfin.storage.anime.host_path
-    required: false
-    visibility: visible
-    source: user
-    placeholder: "Host path to your anime library (leave blank to skip)"
 
   - id: admin_username
     label: Admin Username
