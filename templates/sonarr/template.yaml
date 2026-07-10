@@ -99,11 +99,6 @@ config_schema:
     visibility: visible
     source: platform_path
     platform_key: media_dir
-    requires:
-      - app: prowlarr
-        action: nyaasi
-        severity: warning
-        message: "Install Prowlarr with an indexer for automatic series discovery"
 
   - id: media_propagation
     label: Media Mount Propagation

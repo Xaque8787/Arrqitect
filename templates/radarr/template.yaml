@@ -99,11 +99,6 @@ config_schema:
     visibility: visible
     source: platform_path
     platform_key: media_dir
-    requires:
-      - app: prowlarr
-        action: yts
-        severity: warning
-        message: "Install Prowlarr with the YTS indexer for automatic movie discovery"
 
   - id: media_propagation
     label: Media Mount Propagation
