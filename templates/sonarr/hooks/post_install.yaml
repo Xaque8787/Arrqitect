@@ -94,7 +94,7 @@ steps:
       Content-Type: application/json
       X-Api-Key: "<<registry.sonarr_self_api_key>>"
     body_template: >-
-      {"id":1,"bindAddress":"*","port":<<inputs.web_ui_port>>,"sslPort":9898,"enableSsl":false,"launchBrowser":false,"authenticationMethod":"<<inputs.auth_type>>","authenticationRequired":"disabledForLocalAddresses","username":"<<inputs.auth_username>>","password":"<<inputs.auth_password>>","passwordConfirmation":"<<inputs.auth_password>>","apiKey":"<<registry.sonarr_self_api_key>>","logLevel":"info","analyticsEnabled":false,"branch":"main","updateAutomatically":false,"updateMechanism":"docker","instanceName":"Sonarr","applicationUrl":"","urlBase":""}
+      {"id":1,"bindAddress":"*","port":<<inputs.web_ui_port>>,"sslPort":9898,"enableSsl":false,"launchBrowser":false,"authenticationMethod":"<<inputs.auth_type>>","authenticationRequired":"disabledForLocalAddresses","username":"<<inputs.auth_username>>","password":"<<inputs.auth_password>>","passwordConfirmation":"<<inputs.auth_password>>","apiKey":"<<registry.sonarr_self_api_key>>","logLevel":"info","logSizeLimit":1,"analyticsEnabled":false,"branch":"main","updateAutomatically":false,"updateMechanism":"docker","instanceName":"Sonarr","applicationUrl":"","urlBase":"","backupFolder":"Backups","backupInterval":7,"backupRetention":28,"historyCleanupDays":30}
     on_error: continue
     timeout_seconds: 30
     depends_on:
@@ -106,13 +106,13 @@ steps:
   - id: set_root_folder
     type: http_request
     method: POST
-    url_template: "http://<<registry.sonarr_url_external>>/api/v3/rootfolder"
+    url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/api/v3/rootfolder"
     headers:
       Content-Type: "application/json"
       X-Api-Key: "<<registry.sonarr_self_api_key>>"
     body_template: '{"path":"/media/shows"}'
     idempotency_check:
-      url_template: "http://<<registry.sonarr_url_external>>/api/v3/rootfolder"
+      url_template: "http://host.docker.internal:<<inputs.web_ui_port>>/api/v3/rootfolder"
       headers:
         X-Api-Key: "<<registry.sonarr_self_api_key>>"
       match_field: path
@@ -121,7 +121,7 @@ steps:
     critical: false
     timeout_seconds: 15
     depends_on:
-      - configure_auth
+      - publish_self_url_external
     description: >
       Set /media/shows as Sonarr's root folder. Idempotent — skips if
       already configured. Uses on_error: continue so a missing directory
